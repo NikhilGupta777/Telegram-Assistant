@@ -1,0 +1,122 @@
+Got it — that changes the picture in a good way. Now I understand the bot's job: it's a gateway — users message @NarayanBhaktBot on Telegram ("download this", "translate this to Hindi"), and the bot turns that into VMS API calls and reports results back.
+
+The key thing in those docs is your VMS API supports webhooks (webhookUrl) and SSE. That makes this a perfect fit for the cheapest possible AWS setup.
+
+The architecture that costs ~$0/month
+Instead of one long-running process polling a 10-minute translate job, use a webhook chain:
+
+
+text
+User → Telegram → [Lambda A: start job, store chatId] → VMS API (with webhookUrl)
+                          ↑                              │ (heavy work, 5–15 min)
+                          └── [Lambda B: VMS calls back] ┘ → sends Telegram message
+Both Lambda invocations are sub-second. The slow work happens on your VMS API, not on AWS. So AWS never bills you for waiting.
+
+Component	AWS service	Monthly cost
+HTTPS endpoint for Telegram + VMS webhooks	Lambda Function URL	$0 (free tier: 1M calls/mo)
+Store jobId → chatId mapping (stateless Lambdas)	DynamoDB	$0 (25GB + generous RCU/WCU free tier)
+Secret (bot token, VMS key)	SSM Parameter Store (standard)	$0
+Total for a personal bot		≈ $0.00/month
+You stay in free tier easily unless you do thousands of jobs/day.
+
+Why NOT polling here (important)
+Video translate/dub jobs run 5–15+ minutes. If you poll inside Lambda, you hit its 15-minute hard timeout → jobs die. The webhook approach has no such limit — the VMS API does the waiting and just pings you once when done. This is the single biggest reason to go webhook+Lambda over a polling loop.
+
+The simpler alternative: $3.50/mo flat
+If you'd rather write straightforward code (polling loop, one Node process, no DynamoDB, no webhook plumbing): AWS Lightsail $3.50 instance (512MB, 1 vCPU). Flat price, no surprises, easy SSH. Just be aware long translate jobs need your VMS API's webhook or you poll from the VM (a VM has no timeout, so polling is fine there).
+
+My recommendation
+Webhook + Lambda if you want it as close to free as possible and don't mind slightly more plumbing. Lightsail $3.50 if you want the simplest code and predictable cost.
+
+One catch I noticed earlier: your repo has no bot code yet — only the token in .env. So there's two things to build:
+
+The bot itself (Telegram ↔ VMS API translation layer)
+The deploy (Lambda or Lightsail config)
+Want me to scaffold it? If so, tell me:
+
+Which deploy target — Lambda (webhook, ~
+0
+)
+o
+r
+L
+i
+g
+h
+t
+s
+a
+i
+l
+(
+0)orLightsail(3.50, simpler)?
+Which commands the bot should expose — e.g. /download <url>, /clip <url> <start> <end>, /translate <url>, /timestamps <url>? (I can wire all of them.)
+we dont need these
+Video translation & dubbing
+bhagwat
+Bhagwat AI editor
+thumbnail
+Thumbnail studio
+agent
+AI Studio copilot
+uploads
+Uploads & sharing
+
+and all rest..
+Worked for 50s
+Understood — so for the bot you want to strip away all your custom app features and keep only the core VMS API capabilities. That makes the bot a clean, focused Telegram wrapper. Let me confirm what's in vs. out:
+
+✅ Keep (core VMS API → bot commands)
+Bot command	VMS endpoint	What it does
+/download <url>	/api/v1/download	Full video or audio
+/clips <url>	/api/v1/clips	AI-suggested best clips
+/cut <url> <start> <end>	/api/v1/clip-cut	Cut exact time range
+/timestamps <url>	/api/v1/timestamps	AI chapters
+/subtitles <url>	/api/v1/subtitles	Transcribe to SRT
+❌ Cut (your custom app features, not needed in the bot)
+Video translation & dubbing (translator)
+Bhagwat AI editor (bhagwat)
+Thumbnail studio (thumbnail)
+AI Studio copilot (agent)
+Uploads & sharing (uploads)
+"all the rest" (pitaji, heygen, notebook, etc.)
+So the bot = 5 commands, each a thin wrapper that starts a VMS job, waits for the webhook/callback, then posts the result link back to the Telegram chat.
+
+Is that the right cut? And one still-open question before I scaffold:
+
+Deploy target — Lambda (~
+0
+/
+m
+o
+,
+w
+e
+b
+h
+o
+o
+k
+−
+b
+a
+s
+e
+d
+)
+o
+r
+L
+i
+g
+h
+t
+s
+a
+i
+l
+(
+0/mo,webhook−based)orLightsail(3.50/mo, simpler)?
+
+Given all 5 jobs are short-to-medium except none are super long now that translate is gone, either works. My recommendation stays Lambda + webhooks (~$0) since the bot will be idle 99% of the time. But say the word and I'll build it.
+

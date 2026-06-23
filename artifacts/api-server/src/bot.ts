@@ -291,7 +291,7 @@ function formatResult(
 
 type BotCtx = Parameters<Parameters<typeof bot.on>[1]>[0];
 
-const PROGRESS_MSGS = [
+export const PROGRESS_MSGS = [
   "Analysing video…",
   "AI is working its magic…",
   "Processing…",
@@ -305,6 +305,44 @@ async function runJob(
   endpoint: string,
   payload: Record<string, unknown>,
 ) {
+  // ── Lambda mode: invoke Processor async, return immediately ──────────────
+  const processorArn = process.env["PROCESSOR_FUNCTION_ARN"];
+  if (processorArn) {
+    try {
+      // Dynamic import so @aws-sdk/client-lambda is not required in Replit
+      const { LambdaClient, InvokeCommand } = await import(
+        "@aws-sdk/client-lambda"
+      );
+      const client = new LambdaClient({});
+      await client.send(
+        new InvokeCommand({
+          FunctionName: processorArn,
+          InvocationType: "Event", // async — no wait for response
+          Payload: Buffer.from(
+            JSON.stringify({
+              chatId: ctx.chat!.id,
+              feature,
+              endpoint,
+              payload,
+            }),
+          ),
+        }),
+      );
+      await ctx.reply(
+        `⏳ <b>Job started!</b>\n\nI'll send you the result as soon as it's ready.`,
+        { parse_mode: "HTML" },
+      );
+    } catch (err) {
+      logger.error({ err }, "Failed to invoke processor Lambda");
+      await ctx.reply(
+        `❌ Failed to start job. Please try again.`,
+        { parse_mode: "HTML", ...retryKb(feature) },
+      );
+    }
+    return;
+  }
+
+  // ── Replit/local mode: inline polling ────────────────────────────────────
   let statusMsg: Message.TextMessage | undefined;
 
   try {
