@@ -25,11 +25,14 @@ app.post(WEBHOOK_PATH, (req: Request, res: Response) => {
 
 async function startBot() {
   const domain =
+    process.env["WEBHOOK_DOMAIN"] ??
     process.env["REPLIT_DEV_DOMAIN"] ??
     (process.env["REPLIT_DOMAINS"] ?? "").split(",")[0]?.trim();
 
   if (!domain) {
-    logger.error("No public domain found; bot cannot register webhook");
+    logger.error(
+      "No public domain found. Set WEBHOOK_DOMAIN env var (e.g. your-app.koyeb.app)",
+    );
     return;
   }
 
