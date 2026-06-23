@@ -21,7 +21,6 @@ type Feature =
 interface SessionState {
   feature?: Feature;
   step?: string;
-  data?: Record<string, unknown>;
 }
 
 const sessions = new Map<number, SessionState>();
@@ -55,14 +54,29 @@ const MAIN_MENU = Markup.inlineKeyboard([
   [Markup.button.callback("☁️ Uploads & Sharing", "feat:uploads")],
 ]);
 
-const CANCEL_MENU = Markup.inlineKeyboard([
+const CANCEL_KB = Markup.inlineKeyboard([
   [Markup.button.callback("❌ Cancel", "cancel")],
   [Markup.button.callback("🏠 Main Menu", "menu")],
 ]);
 
-function formatResult(job: JobEnvelope, feature: Feature): string {
+function esc(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function fmtTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function formatResult(job: JobEnvelope, feature: Feature): { text: string; imageUrl?: string } {
   if (!job.succeeded && job.status !== "done") {
-    return `❌ Job failed: ${job.message ?? "Unknown error"}`;
+    return { text: `❌ Job failed: ${esc(job.message ?? "Unknown error")}` };
   }
 
   const result = job.result ?? {};
@@ -70,38 +84,29 @@ function formatResult(job: JobEnvelope, feature: Feature): string {
   switch (feature) {
     case "clips": {
       const clips = (result["clips"] ?? result["ideas"] ?? result["data"]) as
-        | Array<{
-            title?: string;
-            start?: number;
-            end?: number;
-            startTime?: number;
-            endTime?: number;
-            duration?: number;
-            reason?: string;
-            description?: string;
-          }>
+        | Array<{ title?: string; start?: number; end?: number; startTime?: number; endTime?: number; reason?: string; description?: string }>
         | undefined;
       if (Array.isArray(clips) && clips.length > 0) {
         const lines = clips.map((c, i) => {
           const start = c.start ?? c.startTime ?? 0;
           const end = c.end ?? c.endTime ?? 0;
-          return `${i + 1}. *${c.title ?? "Clip"}*\n   🕐 ${fmtTime(start)} → ${fmtTime(end)}\n   ${c.reason ?? c.description ?? ""}`;
+          return `${i + 1}. <b>${esc(c.title ?? "Clip")}</b>\n   🕐 ${fmtTime(start)} → ${fmtTime(end)}\n   ${esc(c.reason ?? c.description ?? "")}`;
         });
-        return `🎬 *AI Best Clips*\n\n${lines.join("\n\n")}`;
+        return { text: `🎬 <b>AI Best Clips</b>\n\n${lines.join("\n\n")}` };
       }
-      return `🎬 *Clips Result*\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      return { text: `🎬 <b>Result</b>\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
 
     case "cut": {
       const url = (result["url"] ?? result["downloadUrl"]) as string | undefined;
-      if (url) return `✂️ *Clip Ready!*\n\n[⬇️ Download your clip](${url})`;
-      return `✂️ Done!\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      if (url) return { text: `✂️ <b>Clip Ready!</b>\n\n<a href="${esc(url)}">⬇️ Download your clip</a>` };
+      return { text: `✂️ Done!\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
 
     case "download": {
       const url = (result["url"] ?? result["downloadUrl"]) as string | undefined;
-      if (url) return `⬇️ *Download Ready!*\n\n[⬇️ Click to download](${url})`;
-      return `⬇️ Done!\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      if (url) return { text: `⬇️ <b>Download Ready!</b>\n\n<a href="${esc(url)}">⬇️ Click to download</a>` };
+      return { text: `⬇️ Done!\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
 
     case "subtitles": {
@@ -109,13 +114,13 @@ function formatResult(job: JobEnvelope, feature: Feature): string {
       const text = result["text"] as string | undefined;
       if (srt) {
         const preview = srt.length > 800 ? srt.slice(0, 800) + "\n..." : srt;
-        return `📝 *Subtitles Generated!*\n\n\`\`\`\n${preview}\n\`\`\``;
+        return { text: `📝 <b>Subtitles Generated!</b>\n\n<pre>${esc(preview)}</pre>` };
       }
       if (text) {
         const preview = text.length > 800 ? text.slice(0, 800) + "..." : text;
-        return `📝 *Transcript:*\n\n${preview}`;
+        return { text: `📝 <b>Transcript:</b>\n\n${esc(preview)}` };
       }
-      return `📝 Done!\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      return { text: `📝 Done!\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
 
     case "timestamps": {
@@ -123,26 +128,24 @@ function formatResult(job: JobEnvelope, feature: Feature): string {
         | Array<{ time?: number; label?: string; title?: string }>
         | undefined;
       if (Array.isArray(ts) && ts.length > 0) {
-        const lines = ts.map(
-          (t) => `${fmtTime(t.time ?? 0)} — ${t.label ?? t.title ?? ""}`,
-        );
-        return `⏱ *AI Timestamps*\n\n${lines.join("\n")}`;
+        const lines = ts.map((t) => `${fmtTime(t.time ?? 0)} — ${esc(t.label ?? t.title ?? "")}`);
+        return { text: `⏱ <b>AI Timestamps</b>\n\n${lines.join("\n")}` };
       }
-      return `⏱ Done!\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      return { text: `⏱ Done!\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
 
     case "bhagwat": {
       const url = (result["url"] ?? result["downloadUrl"]) as string | undefined;
       const text = result["text"] as string | undefined;
-      if (url) return `📖 *Bhagwat AI Result*\n\n[📥 Download](${url})`;
-      if (text) return `📖 *Bhagwat AI Result*\n\n${text.slice(0, 1000)}`;
-      return `📖 Done!\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      if (url) return { text: `📖 <b>Bhagwat AI Result</b>\n\n<a href="${esc(url)}">📥 Download</a>` };
+      if (text) return { text: `📖 <b>Bhagwat AI Result</b>\n\n${esc(text.slice(0, 1000))}` };
+      return { text: `📖 Done!\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
 
     case "thumbnail": {
       const url = (result["url"] ?? result["imageUrl"]) as string | undefined;
-      if (url) return `__THUMBNAIL__:${url}`;
-      return `🖼 Done!\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      if (url) return { text: `🖼 <b>Thumbnail Ready!</b>`, imageUrl: url };
+      return { text: `🖼 Done!\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
 
     case "agent": {
@@ -150,92 +153,71 @@ function formatResult(job: JobEnvelope, feature: Feature): string {
         (result["reply"] as string | undefined) ??
         (result["response"] as string | undefined) ??
         (result["text"] as string | undefined);
-      if (reply) return `🤖 *AI Copilot:*\n\n${reply}`;
-      return `🤖 Done!\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      if (reply) return { text: `🤖 <b>AI Copilot:</b>\n\n${esc(reply)}` };
+      return { text: `🤖 Done!\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
 
     case "uploads": {
       const url = (result["url"] ?? result["shareUrl"]) as string | undefined;
-      if (url) return `☁️ *Uploaded!*\n\n[🔗 Share Link](${url})`;
-      return `☁️ Done!\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      if (url) return { text: `☁️ <b>Uploaded!</b>\n\n<a href="${esc(url)}">🔗 Share Link</a>` };
+      return { text: `☁️ Done!\n<pre>${esc(JSON.stringify(result, null, 2))}</pre>` };
     }
   }
 }
 
-function fmtTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
-  return `${m}:${pad(s)}`;
-}
-
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
+type BotCtx = Parameters<Parameters<typeof bot.on>[1]>[0];
 
 async function runJob(
-  ctx: { reply: (text: string, extra?: object) => Promise<unknown>; replyWithPhoto?: (url: string, extra?: object) => Promise<unknown> },
+  ctx: BotCtx,
   feature: Feature,
   endpoint: string,
   payload: Record<string, unknown>,
 ) {
-  let statusMsg: { message_id?: number } = {};
   try {
     const job = await startJob(endpoint, payload);
-    statusMsg = (await ctx.reply(
-      `⏳ Job started (ID: \`${job.jobId}\`)\\. Processing…`,
-      { parse_mode: "MarkdownV2" },
-    )) as { message_id?: number };
+    await ctx.reply(`⏳ Job started (ID: <code>${esc(job.jobId)}</code>). Processing…`, {
+      parse_mode: "HTML",
+    });
 
     const done = await waitForJob(job.jobId);
-    const text = formatResult(done, feature);
+    const { text, imageUrl } = formatResult(done, feature);
 
-    if (text.startsWith("__THUMBNAIL__:")) {
-      const url = text.slice("__THUMBNAIL__:".length);
-      if (ctx.replyWithPhoto) {
-        await ctx.replyWithPhoto(url, {
-          caption: "🖼 *Thumbnail Ready\\!*",
-          parse_mode: "MarkdownV2",
-          ...CANCEL_MENU,
-        });
-      } else {
-        await ctx.reply(`🖼 *Thumbnail Ready\\!*\n[View](${url})`, {
-          parse_mode: "MarkdownV2",
-          ...CANCEL_MENU,
-        });
-      }
-    } else {
-      await ctx.reply(escapeMarkdown(text), {
-        parse_mode: "MarkdownV2",
+    if (imageUrl) {
+      await ctx.replyWithPhoto(imageUrl, {
+        caption: text,
+        parse_mode: "HTML",
         ...MAIN_MENU,
       });
+    } else {
+      await ctx.reply(text, { parse_mode: "HTML", ...MAIN_MENU });
     }
   } catch (err) {
     logger.error({ err }, "VMS job error");
     await ctx.reply(
-      `❌ Error: ${err instanceof Error ? err.message : String(err)}\n\nTry again or pick another feature.`,
-      MAIN_MENU,
+      `❌ Error: ${esc(err instanceof Error ? err.message : String(err))}\n\nTry again or pick another feature.`,
+      { parse_mode: "HTML", ...MAIN_MENU },
     );
   }
 }
 
-function escapeMarkdown(text: string): string {
-  return text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
-}
+const WELCOME = `👋 Welcome to <b>VideoMaking Studio Bot</b>!
+
+I can help you with:
+🎬 Best Clips  |  ✂️ Clip Cut  |  📝 Subtitles
+⏱ Timestamps  |  ⬇️ Download  |  📖 Bhagwat AI
+🖼 Thumbnail  |  🤖 AI Copilot  |  ☁️ Uploads
+
+Choose a feature below:`;
 
 bot.start(async (ctx) => {
   clearSession(ctx.from.id);
-  await ctx.reply(
-    `👋 Welcome to *VideoMaking Studio Bot*\\!\n\nI can help you with:\n🎬 Best Clips \\| ✂️ Clip Cut \\| 📝 Subtitles \\| ⏱ Timestamps \\| ⬇️ Download \\| 📖 Bhagwat AI \\| 🖼 Thumbnail \\| 🤖 AI Copilot \\| ☁️ Uploads\n\nChoose a feature below:`,
-    { parse_mode: "MarkdownV2", ...MAIN_MENU },
-  );
+  await ctx.reply(WELCOME, { parse_mode: "HTML", ...MAIN_MENU });
 });
 
 bot.help(async (ctx) => {
   await ctx.reply(
-    `🆘 *Help*\n\nUse the buttons to pick a feature\\.\nSend /start to return to the main menu anytime\\.`,
-    { parse_mode: "MarkdownV2", ...MAIN_MENU },
+    "Use the buttons below to pick a feature. Send /start to return to the main menu anytime.",
+    MAIN_MENU,
   );
 });
 
@@ -252,45 +234,27 @@ bot.action("cancel", async (ctx) => {
 });
 
 const FEATURE_PROMPTS: Record<Feature, string> = {
-  clips:
-    "🎬 *Best Clips*\n\nSend a YouTube URL and optionally target durations\\.\nFormat: `<url> [30,60]`\nExample:\n`https://youtu.be/abc123 30,60`",
-  cut: "✂️ *Clip Cut*\n\nSend:\n`<YouTube URL> <start> <end>`\nTimes in seconds\\.\nExample:\n`https://youtu.be/abc123 10 40`",
-  subtitles:
-    "📝 *Subtitles*\n\nSend a public video URL:\n`<url> [language]`\nLanguage is optional \\(e\\.g\\. `en`, `hi`\\)\\.\nExample:\n`https://youtu.be/abc123 en`",
-  timestamps:
-    "⏱ *Timestamps*\n\nSend a YouTube URL:\n`<url> [instructions]`\nExample:\n`https://youtu.be/abc123 Make detailed chapters`",
-  download:
-    "⬇️ *Download*\n\nSend a YouTube URL:\n`<url> [audio]`\nAdd `audio` to download audio only\\.\nExample:\n`https://youtu.be/abc123`\nor\n`https://youtu.be/abc123 audio`",
-  bhagwat:
-    "📖 *Bhagwat AI Editor*\n\nSend a public video URL to process with the Bhagwat AI editor:\n`<video url>`",
-  thumbnail:
-    "🖼 *Thumbnail Studio*\n\nSend a YouTube URL or video URL to generate a thumbnail:\n`<url>`",
-  agent:
-    "🤖 *AI Studio Copilot*\n\nSend your message or video URL for the AI copilot:\n`<url or message>`",
-  uploads:
-    "☁️ *Uploads & Sharing*\n\nSend a public file URL to upload and get a share link:\n`<url>`",
+  clips: `🎬 <b>Best Clips</b>\n\nSend a YouTube URL (optionally add target durations).\nFormat: <code>&lt;url&gt; [30,60]</code>\nExample:\n<code>https://youtu.be/abc123 30,60</code>`,
+  cut: `✂️ <b>Clip Cut</b>\n\nSend:\n<code>&lt;YouTube URL&gt; &lt;startSec&gt; &lt;endSec&gt;</code>\nExample:\n<code>https://youtu.be/abc123 10 40</code>`,
+  subtitles: `📝 <b>Subtitles</b>\n\nSend a public video URL:\n<code>&lt;url&gt; [language]</code>\nLanguage is optional (e.g. <code>en</code>, <code>hi</code>).\nExample:\n<code>https://youtu.be/abc123 en</code>`,
+  timestamps: `⏱ <b>Timestamps</b>\n\nSend a YouTube URL:\n<code>&lt;url&gt; [instructions]</code>\nExample:\n<code>https://youtu.be/abc123 Make detailed chapters</code>`,
+  download: `⬇️ <b>Download</b>\n\nSend a YouTube URL:\n<code>&lt;url&gt; [audio]</code>\nAdd <code>audio</code> to download audio only.\nExample:\n<code>https://youtu.be/abc123</code>`,
+  bhagwat: `📖 <b>Bhagwat AI Editor</b>\n\nSend a public video URL:\n<code>&lt;video url&gt;</code>`,
+  thumbnail: `🖼 <b>Thumbnail Studio</b>\n\nSend a YouTube URL or video URL:\n<code>&lt;url&gt;</code>`,
+  agent: `🤖 <b>AI Studio Copilot</b>\n\nSend your video URL or message:\n<code>&lt;url or message&gt;</code>`,
+  uploads: `☁️ <b>Uploads &amp; Sharing</b>\n\nSend a public file URL:\n<code>&lt;url&gt;</code>`,
 };
 
 for (const feat of [
-  "clips",
-  "cut",
-  "subtitles",
-  "timestamps",
-  "download",
-  "bhagwat",
-  "thumbnail",
-  "agent",
-  "uploads",
+  "clips", "cut", "subtitles", "timestamps", "download",
+  "bhagwat", "thumbnail", "agent", "uploads",
 ] as Feature[]) {
   bot.action(`feat:${feat}`, async (ctx) => {
     await ctx.answerCbQuery();
     const session = getSession(ctx.from.id);
     session.feature = feat;
     session.step = "awaiting_input";
-    await ctx.reply(FEATURE_PROMPTS[feat], {
-      parse_mode: "MarkdownV2",
-      ...CANCEL_MENU,
-    });
+    await ctx.reply(FEATURE_PROMPTS[feat], { parse_mode: "HTML", ...CANCEL_KB });
   });
 }
 
@@ -309,7 +273,7 @@ bot.on("text", async (ctx) => {
   const feature = session.feature;
   clearSession(userId);
 
-  await ctx.reply("✅ Got it\\! Starting job…", { parse_mode: "MarkdownV2" });
+  await ctx.reply("✅ Got it! Starting job…");
 
   switch (feature) {
     case "clips": {
@@ -319,11 +283,7 @@ bot.on("text", async (ctx) => {
       const durations = durStr
         ? durStr.split(",").map(Number).filter((n) => !isNaN(n))
         : [30, 60];
-      await runJob(ctx, feature, "clips", {
-        url,
-        durations,
-        auto: true,
-      });
+      await runJob(ctx, feature, "clips", { url, durations, auto: true });
       break;
     }
 
@@ -331,27 +291,27 @@ bot.on("text", async (ctx) => {
       const parts = text.split(/\s+/);
       if (parts.length < 3) {
         await ctx.reply(
-          "❌ Format: `<url> <startSec> <endSec>`",
-          { parse_mode: "MarkdownV2", ...CANCEL_MENU },
+          `❌ Format: <code>&lt;url&gt; &lt;startSec&gt; &lt;endSec&gt;</code>`,
+          { parse_mode: "HTML", ...CANCEL_KB },
         );
         session.feature = feature;
         session.step = "awaiting_input";
         return;
       }
-      const [url, startStr, endStr] = parts;
       await runJob(ctx, feature, "clip-cut", {
-        url,
-        startTime: Number(startStr),
-        endTime: Number(endStr),
+        url: parts[0],
+        startTime: Number(parts[1]),
+        endTime: Number(parts[2]),
       });
       break;
     }
 
     case "subtitles": {
       const parts = text.split(/\s+/);
-      const url = parts[0];
-      const language = parts[1] ?? "auto";
-      await runJob(ctx, feature, "subtitles", { url, language });
+      await runJob(ctx, feature, "subtitles", {
+        url: parts[0],
+        language: parts[1] ?? "auto",
+      });
       break;
     }
 
@@ -368,40 +328,35 @@ bot.on("text", async (ctx) => {
 
     case "download": {
       const parts = text.split(/\s+/);
-      const url = parts[0];
-      const audioOnly = parts[1]?.toLowerCase() === "audio";
-      await runJob(ctx, feature, "download", { url, audioOnly });
+      await runJob(ctx, feature, "download", {
+        url: parts[0],
+        audioOnly: parts[1]?.toLowerCase() === "audio",
+      });
       break;
     }
 
-    case "bhagwat": {
+    case "bhagwat":
       await runJob(ctx, feature, "bhagwat", { url: text });
       break;
-    }
 
-    case "thumbnail": {
+    case "thumbnail":
       await runJob(ctx, feature, "thumbnail", { url: text });
       break;
-    }
 
     case "agent": {
-      const spaceIdx = text.indexOf(" ");
       const isUrl = text.startsWith("http");
+      const spaceIdx = text.indexOf(" ");
       const payload: Record<string, unknown> = isUrl
-        ? { url: text }
+        ? { url: spaceIdx !== -1 ? text.slice(0, spaceIdx) : text }
         : { message: text };
-      if (spaceIdx !== -1 && isUrl) {
-        payload["instructions"] = text.slice(spaceIdx + 1);
-        payload["url"] = text.slice(0, spaceIdx);
-      }
+      if (isUrl && spaceIdx !== -1) payload["instructions"] = text.slice(spaceIdx + 1);
       await runJob(ctx, feature, "agent", payload);
       break;
     }
 
-    case "uploads": {
+    case "uploads":
       await runJob(ctx, feature, "uploads", { url: text });
       break;
-    }
   }
 });
 
