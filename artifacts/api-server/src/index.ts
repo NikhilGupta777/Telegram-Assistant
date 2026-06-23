@@ -43,6 +43,17 @@ async function startBot() {
   } catch (err) {
     logger.error({ err }, "Failed to set Telegram webhook");
   }
+
+  try {
+    await bot.telegram.setMyCommands([
+      { command: "start", description: "🏠 Main menu" },
+      { command: "help", description: "❓ How to use this bot" },
+      { command: "cancel", description: "❌ Cancel current action" },
+    ]);
+    logger.info("Bot commands registered");
+  } catch (err) {
+    logger.error({ err }, "Failed to set bot commands");
+  }
 }
 
 app.listen(port, (err) => {
