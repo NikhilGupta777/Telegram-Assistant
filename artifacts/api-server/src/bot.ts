@@ -11,20 +11,21 @@ export const bot = new Telegraf(token);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Feature =
-  | "clips"
-  | "cut"
-  | "subtitles"
-  | "timestamps"
-  | "download"
-  | "bhagwat"
-  | "thumbnail"
-  | "agent"
-  | "uploads";
+type ActiveFeature = "clips" | "cut" | "subtitles" | "timestamps" | "download";
+
+type Step =
+  | "clips_url"
+  | "cut_url"
+  | "cut_start"
+  | "cut_end"
+  | "subtitles_url"
+  | "timestamps_url"
+  | "download_url"
+  | "download_type";
 
 interface SessionState {
-  feature?: Feature;
-  step?: "awaiting_input" | "awaiting_dl_type";
+  feature?: ActiveFeature;
+  step?: Step;
   data?: Record<string, unknown>;
   expiresAt?: number;
 }
@@ -32,7 +33,7 @@ interface SessionState {
 // ─── Session Store ────────────────────────────────────────────────────────────
 
 const sessions = new Map<number, SessionState>();
-const SESSION_TTL = 30 * 60 * 1000; // 30 minutes
+const SESSION_TTL = 30 * 60 * 1000;
 
 function getSession(userId: number): SessionState {
   const s = sessions.get(userId);
@@ -53,16 +54,12 @@ function clearSession(userId: number) {
   sessions.set(userId, { expiresAt: Date.now() + SESSION_TTL });
 }
 
-// Cleanup expired sessions every 15 minutes
-setInterval(
-  () => {
-    const now = Date.now();
-    for (const [id, s] of sessions) {
-      if (s.expiresAt && now > s.expiresAt) sessions.delete(id);
-    }
-  },
-  15 * 60 * 1000,
-);
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (s.expiresAt && now > s.expiresAt) sessions.delete(id);
+  }
+}, 15 * 60 * 1000);
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -73,7 +70,6 @@ function esc(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
-/** Accepts: 90  |  1:30  |  0:01:30  → returns seconds, or null if invalid */
 function parseSeconds(input: string): number | null {
   const parts = input.trim().split(":");
   if (parts.length === 1) {
@@ -106,7 +102,7 @@ function fmtTime(seconds: number): string {
 
 function isValidUrl(text: string): boolean {
   try {
-    const u = new URL(text);
+    const u = new URL(text.trim());
     return u.protocol === "http:" || u.protocol === "https:";
   } catch {
     return false;
@@ -124,127 +120,55 @@ const MAIN_MENU = Markup.inlineKeyboard([
     Markup.button.callback("📝 Subtitles", "feat:subtitles"),
     Markup.button.callback("⏱ Timestamps", "feat:timestamps"),
   ],
+  [Markup.button.callback("⬇️ Download", "feat:download")],
   [
-    Markup.button.callback("⬇️ Download", "feat:download"),
-    Markup.button.callback("📖 Bhagwat AI", "feat:bhagwat"),
+    Markup.button.callback("📖 Bhagwat AI 🔒", "soon"),
+    Markup.button.callback("🖼 Thumbnail 🔒", "soon"),
   ],
   [
-    Markup.button.callback("🖼 Thumbnail", "feat:thumbnail"),
-    Markup.button.callback("🤖 AI Copilot", "feat:agent"),
+    Markup.button.callback("🤖 AI Copilot 🔒", "soon"),
+    Markup.button.callback("☁️ Uploads 🔒", "soon"),
   ],
-  [Markup.button.callback("☁️ Uploads & Sharing", "feat:uploads")],
 ]);
 
 const CANCEL_KB = Markup.inlineKeyboard([
   [Markup.button.callback("❌ Cancel", "cancel")],
 ]);
 
-function retryKb(feat: Feature) {
+function retryKb(feat: ActiveFeature) {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔄 Try Again", `feat:${feat}`)],
     [Markup.button.callback("🏠 Main Menu", "menu")],
   ]);
 }
 
-// ─── Static Text ──────────────────────────────────────────────────────────────
+// ─── Welcome ──────────────────────────────────────────────────────────────────
 
 const WELCOME = `🙏 <b>Narayan Bhakt Editor</b>
 
-Your AI-powered video studio is ready!
+Your AI-powered video studio. Choose a feature:
 
-<b>What I can do:</b>
+✅ <b>Available now:</b>
 🎬 <b>Best Clips</b> — Find viral moments automatically
 ✂️ <b>Clip Cut</b> — Cut any section of a video
-📝 <b>Subtitles</b> — Generate subtitles or transcript
-⏱ <b>Timestamps</b> — Auto-generate chapter timestamps
+📝 <b>Subtitles</b> — Generate subtitles &amp; transcript
+⏱ <b>Timestamps</b> — Auto-generate YouTube chapters
 ⬇️ <b>Download</b> — Download YouTube videos
-📖 <b>Bhagwat AI</b> — AI-powered video editor
-🖼 <b>Thumbnail</b> — Generate AI thumbnails
-🤖 <b>AI Copilot</b> — Your video production assistant
-☁️ <b>Uploads</b> — Upload &amp; share videos
 
-<b>👇 Choose a feature to get started:</b>`;
-
-const FEATURE_PROMPTS: Record<Feature, string> = {
-  clips: `🎬 <b>Best Clips Finder</b>
-
-Send a YouTube URL and I'll find the best viral moments automatically.
-
-<b>Just send the link:</b>
-<code>https://youtu.be/abc123</code>
-
-Or with custom lengths (seconds):
-<code>https://youtu.be/abc123 30,60,90</code>`,
-
-  cut: `✂️ <b>Clip Cut</b>
-
-Send the URL followed by start and end times.
-
-<b>Format:</b>
-<code>URL  start  end</code>
-
-<b>Time formats accepted:</b>
-• Seconds → <code>90</code>
-• MM:SS → <code>1:30</code>
-• HH:MM:SS → <code>0:01:30</code>
-
-<b>Example:</b>
-<code>https://youtu.be/abc123  1:23  2:45</code>`,
-
-  subtitles: `📝 <b>Subtitles / Transcript</b>
-
-Paste a YouTube or video URL:
-<code>https://youtu.be/abc123</code>
-
-The subtitles will be sent as a downloadable .srt file.`,
-
-  timestamps: `⏱ <b>AI Timestamps</b>
-
-Paste a YouTube URL to generate chapter timestamps:
-<code>https://youtu.be/abc123</code>
-
-Or add custom instructions:
-<code>https://youtu.be/abc123 Make 10 detailed chapters</code>`,
-
-  download: `⬇️ <b>Download Video</b>
-
-Paste a YouTube URL:
-<code>https://youtu.be/abc123</code>`,
-
-  bhagwat: `📖 <b>Bhagwat AI Editor</b>
-
-Paste a video URL to process with Bhagwat AI:
-<code>https://youtu.be/abc123</code>`,
-
-  thumbnail: `🖼 <b>Thumbnail Studio</b>
-
-Paste a YouTube URL to generate an AI thumbnail:
-<code>https://youtu.be/abc123</code>`,
-
-  agent: `🤖 <b>AI Studio Copilot</b>
-
-Ask anything, or paste a URL with instructions:
-
-<b>Examples:</b>
-<code>How do I make better thumbnails?</code>
-<code>https://youtu.be/abc123  Give me title ideas</code>`,
-
-  uploads: `☁️ <b>Uploads &amp; Sharing</b>
-
-Paste a public video or file URL to upload and get a share link:
-<code>https://example.com/video.mp4</code>`,
-};
+🔒 <b>Coming soon:</b>
+📖 Bhagwat AI Editor  •  🖼 Thumbnail Studio
+🤖 AI Copilot  •  ☁️ Uploads &amp; Sharing`;
 
 // ─── Result Formatter ─────────────────────────────────────────────────────────
 
 function formatResult(
   job: JobEnvelope,
-  feature: Feature,
+  feature: ActiveFeature,
 ): { text: string; imageUrl?: string; srtContent?: string } {
   if (job.failed || job.status === "error" || job.status === "cancelled") {
     const msg = job.message ?? "Something went wrong. Please try again.";
     return {
-      text: `❌ <b>Job failed</b>\n\n${esc(msg)}\n\n<i>Please try again with a different URL or contact support.</i>`,
+      text: `❌ <b>Job failed</b>\n\n${esc(msg)}\n\n<i>Please try again with a different URL.</i>`,
     };
   }
 
@@ -272,19 +196,18 @@ function formatResult(
           return (
             `${i + 1}. <b>${esc(c.title ?? `Clip ${i + 1}`)}</b>\n` +
             `   ⏱ <code>${fmtTime(start)}</code> → <code>${fmtTime(end)}</code>\n` +
-            (desc ? `   ${esc(desc.slice(0, 120))}` : "")
+            (desc ? `   <i>${esc(desc.slice(0, 120))}</i>` : "")
           ).trimEnd();
         });
         return {
           text:
-            `🎬 <b>Best Clips Found! (${clips.length})</b>\n\n` +
+            `🎬 <b>Best Clips Found!</b> (${clips.length} clips)\n\n` +
             lines.join("\n\n") +
-            `\n\n<i>✂️ Use Clip Cut to download any of these clips</i>`,
+            `\n\n<i>Tip: Use ✂️ Clip Cut to download any clip</i>`,
         };
       }
-      const raw = JSON.stringify(result, null, 2);
       return {
-        text: `🎬 <b>Done!</b>\n\n<pre>${esc(raw.slice(0, 2000))}</pre>`,
+        text: `🎬 <b>Done!</b>\n\n<pre>${esc(JSON.stringify(result, null, 2).slice(0, 2000))}</pre>`,
       };
     }
 
@@ -294,7 +217,7 @@ function formatResult(
         result["fileUrl"]) as string | undefined;
       if (url)
         return {
-          text: `✂️ <b>Clip is Ready!</b>\n\n<a href="${esc(url)}">⬇️ Download your clip</a>`,
+          text: `✂️ <b>Your clip is ready!</b>\n\n<a href="${esc(url)}">⬇️ Download Clip</a>`,
         };
       return {
         text: `✂️ <b>Done!</b>\n\n<pre>${esc(JSON.stringify(result, null, 2).slice(0, 1500))}</pre>`,
@@ -307,7 +230,7 @@ function formatResult(
         result["fileUrl"]) as string | undefined;
       if (url)
         return {
-          text: `⬇️ <b>Download Ready!</b>\n\n<a href="${esc(url)}">⬇️ Click here to download</a>`,
+          text: `⬇️ <b>Download ready!</b>\n\n<a href="${esc(url)}">⬇️ Click to download</a>`,
         };
       return {
         text: `⬇️ <b>Done!</b>\n\n<pre>${esc(JSON.stringify(result, null, 2).slice(0, 1500))}</pre>`,
@@ -323,7 +246,7 @@ function formatResult(
       const content = srt ?? vtt;
       if (content) {
         return {
-          text: `📝 <b>Subtitles Generated!</b>\n\nYour .srt subtitle file is ready to download.`,
+          text: `📝 <b>Subtitles generated!</b>\n\nYour <code>.srt</code> subtitle file is attached below.`,
           srtContent: content,
         };
       }
@@ -331,8 +254,8 @@ function formatResult(
         const preview = text.slice(0, 2000);
         return {
           text:
-            `📝 <b>Transcript Ready!</b>\n\n${esc(preview)}` +
-            (text.length > 2000 ? "\n\n<i>…(truncated — full transcript above)</i>" : ""),
+            `📝 <b>Transcript ready!</b>\n\n${esc(preview)}` +
+            (text.length > 2000 ? "\n\n<i>…truncated</i>" : ""),
         };
       }
       return {
@@ -350,71 +273,15 @@ function formatResult(
           (t) =>
             `<code>${fmtTime(t.time ?? 0)}</code> — ${esc(t.label ?? t.title ?? "Chapter")}`,
         );
-        const joined = lines.join("\n");
         return {
           text:
-            `⏱ <b>AI Timestamps (${ts.length} chapters)</b>\n\n` +
-            joined.slice(0, 3500) +
-            `\n\n<i>📋 Copy and paste into your YouTube description</i>`,
+            `⏱ <b>AI Timestamps</b> (${ts.length} chapters)\n\n` +
+            lines.join("\n").slice(0, 3500) +
+            `\n\n<i>📋 Copy &amp; paste into your YouTube description</i>`,
         };
       }
       return {
         text: `⏱ <b>Done!</b>\n\n<pre>${esc(JSON.stringify(result, null, 2).slice(0, 1500))}</pre>`,
-      };
-    }
-
-    case "bhagwat": {
-      const url = (result["url"] ??
-        result["downloadUrl"] ??
-        result["fileUrl"]) as string | undefined;
-      const text = result["text"] as string | undefined;
-      if (url)
-        return {
-          text: `📖 <b>Bhagwat AI Complete!</b>\n\n<a href="${esc(url)}">📥 Download Result</a>`,
-        };
-      if (text)
-        return {
-          text: `📖 <b>Bhagwat AI Result:</b>\n\n${esc(text.slice(0, 2500))}`,
-        };
-      return {
-        text: `📖 <b>Done!</b>\n\n<pre>${esc(JSON.stringify(result, null, 2).slice(0, 1500))}</pre>`,
-      };
-    }
-
-    case "thumbnail": {
-      const url = (result["url"] ??
-        result["imageUrl"] ??
-        result["thumbnailUrl"]) as string | undefined;
-      if (url) return { text: `🖼 <b>Thumbnail Ready!</b>`, imageUrl: url };
-      return {
-        text: `🖼 <b>Done!</b>\n\n<pre>${esc(JSON.stringify(result, null, 2).slice(0, 1500))}</pre>`,
-      };
-    }
-
-    case "agent": {
-      const reply = (result["reply"] ??
-        result["response"] ??
-        result["text"] ??
-        result["message"]) as string | undefined;
-      if (reply)
-        return {
-          text: `🤖 <b>AI Copilot:</b>\n\n${esc(reply.slice(0, 3000))}`,
-        };
-      return {
-        text: `🤖 <b>Done!</b>\n\n<pre>${esc(JSON.stringify(result, null, 2).slice(0, 1500))}</pre>`,
-      };
-    }
-
-    case "uploads": {
-      const url = (result["url"] ??
-        result["shareUrl"] ??
-        result["publicUrl"]) as string | undefined;
-      if (url)
-        return {
-          text: `☁️ <b>Uploaded &amp; Shared!</b>\n\n<a href="${esc(url)}">🔗 Copy Share Link</a>`,
-        };
-      return {
-        text: `☁️ <b>Done!</b>\n\n<pre>${esc(JSON.stringify(result, null, 2).slice(0, 1500))}</pre>`,
       };
     }
   }
@@ -424,17 +291,17 @@ function formatResult(
 
 type BotCtx = Parameters<Parameters<typeof bot.on>[1]>[0];
 
-const PROGRESS_TEXTS = [
+const PROGRESS_MSGS = [
   "Analysing video…",
-  "AI is working…",
-  "Processing frames…",
+  "AI is working its magic…",
+  "Processing…",
   "Almost done…",
-  "Finalising…",
+  "Finalising results…",
 ];
 
 async function runJob(
   ctx: BotCtx,
-  feature: Feature,
+  feature: ActiveFeature,
   endpoint: string,
   payload: Record<string, unknown>,
 ) {
@@ -443,48 +310,35 @@ async function runJob(
   try {
     const job = await startJob(endpoint, payload);
 
-    statusMsg = await ctx.reply(
-      `⏳ <b>Working on it…</b>\n\n🔄 Starting up…`,
-      { parse_mode: "HTML" },
-    );
+    statusMsg = await ctx.reply(`⏳ <b>Working on it…</b>\n\n🔄 Starting up…`, {
+      parse_mode: "HTML",
+    });
 
     let tick = 0;
-    const done = await waitForJob(
-      job.jobId,
-      async (current) => {
-        const pct =
-          current.progress != null ? ` (${current.progress}%)` : "";
-        const progressText = PROGRESS_TEXTS[tick % PROGRESS_TEXTS.length]!;
-        tick++;
-        try {
-          await ctx.telegram.editMessageText(
-            ctx.chat!.id,
-            statusMsg!.message_id,
-            undefined,
-            `⏳ <b>Working on it…</b>\n\n🔄 ${progressText}${pct}`,
-            { parse_mode: "HTML" },
-          );
-        } catch {
-          /* ignore edit failures — message may have been deleted */
-        }
-      },
-    );
+    const done = await waitForJob(job.jobId, async (current) => {
+      const pct = current.progress != null ? ` ${current.progress}%` : "";
+      const msg = PROGRESS_MSGS[tick % PROGRESS_MSGS.length]!;
+      tick++;
+      try {
+        await ctx.telegram.editMessageText(
+          ctx.chat!.id,
+          statusMsg!.message_id,
+          undefined,
+          `⏳ <b>Working on it…</b>\n\n🔄 ${msg}${pct}`,
+          { parse_mode: "HTML" },
+        );
+      } catch { /* ignore */ }
+    });
 
-    // Remove progress message
     try {
       await ctx.telegram.deleteMessage(ctx.chat!.id, statusMsg.message_id);
-    } catch {
-      /* ok */
-    }
+    } catch { /* ok */ }
 
     const { text, imageUrl, srtContent } = formatResult(done, feature);
 
     if (srtContent) {
       await ctx.replyWithDocument(
-        {
-          source: Buffer.from(srtContent, "utf-8"),
-          filename: "subtitles.srt",
-        },
+        { source: Buffer.from(srtContent, "utf-8"), filename: "subtitles.srt" },
         { caption: text, parse_mode: "HTML", ...MAIN_MENU },
       );
     } else if (imageUrl) {
@@ -503,12 +357,9 @@ async function runJob(
     if (statusMsg) {
       try {
         await ctx.telegram.deleteMessage(ctx.chat!.id, statusMsg.message_id);
-      } catch {
-        /* ok */
-      }
+      } catch { /* ok */ }
     }
 
-    // Try to extract a clean user-facing message from VMS error JSON
     let userMsg = raw;
     try {
       const jsonStart = raw.indexOf("{");
@@ -517,12 +368,9 @@ async function runJob(
           error?: { message?: string };
           message?: string;
         };
-        userMsg =
-          parsed?.error?.message ?? parsed?.message ?? raw;
+        userMsg = parsed?.error?.message ?? parsed?.message ?? raw;
       }
-    } catch {
-      /* use raw */
-    }
+    } catch { /* use raw */ }
 
     await ctx.reply(
       `❌ <b>Something went wrong</b>\n\n${esc(userMsg.slice(0, 500))}`,
@@ -541,24 +389,25 @@ bot.start(async (ctx) => {
 bot.help(async (ctx) => {
   await ctx.reply(
     `🙏 <b>How to use Narayan Bhakt Editor</b>\n\n` +
-      `1. Pick a feature from the menu below\n` +
-      `2. Paste your YouTube URL when asked\n` +
-      `3. Wait for results (usually 30s–3 min)\n\n` +
+      `1️⃣ Tap a feature button\n` +
+      `2️⃣ Follow the prompts step by step\n` +
+      `3️⃣ Paste your YouTube link when asked\n` +
+      `4️⃣ Wait for your result (30s – 3 min)\n\n` +
       `<b>Commands:</b>\n` +
-      `/start — Back to main menu\n` +
-      `/cancel — Cancel current action\n` +
-      `/help — Show this message\n\n` +
-      `<b>Tips:</b>\n` +
-      `• For Clip Cut, use <code>1:30</code> or <code>90</code> for times\n` +
-      `• Subtitles are sent as downloadable .srt files\n` +
-      `• Best Clips finds viral moments automatically`,
+      `/start — 🏠 Main menu\n` +
+      `/cancel — ❌ Cancel current action\n` +
+      `/help — ❓ This message\n\n` +
+      `<b>Clip Cut time formats:</b>\n` +
+      `• Seconds: <code>90</code>\n` +
+      `• MM:SS: <code>1:30</code>\n` +
+      `• HH:MM:SS: <code>0:01:30</code>`,
     { parse_mode: "HTML", ...MAIN_MENU },
   );
 });
 
 bot.command("cancel", async (ctx) => {
   clearSession(ctx.from.id);
-  await ctx.reply("✅ Cancelled. Choose a feature:", MAIN_MENU);
+  await ctx.reply("✅ Cancelled.", MAIN_MENU);
 });
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -572,19 +421,86 @@ bot.action("menu", async (ctx) => {
 bot.action("cancel", async (ctx) => {
   await ctx.answerCbQuery("Cancelled ✅");
   clearSession(ctx.from.id);
-  await ctx.reply("✅ Cancelled. Choose a feature:", MAIN_MENU);
+  await ctx.reply("✅ Cancelled.", MAIN_MENU);
 });
 
-// Download type picker
+// Coming soon handler
+bot.action("soon", async (ctx) => {
+  await ctx.answerCbQuery(
+    "🔒 Coming soon! Stay tuned.",
+    { show_alert: true },
+  );
+});
+
+// ── Best Clips ────────────────────────────────────────────────────────────────
+bot.action("feat:clips", async (ctx) => {
+  await ctx.answerCbQuery();
+  setSession(ctx.from.id, { feature: "clips", step: "clips_url", data: {} });
+  await ctx.reply(
+    `🎬 <b>Best Clips</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n<code>https://youtu.be/abc123</code>`,
+    { parse_mode: "HTML", ...CANCEL_KB },
+  );
+});
+
+// ── Clip Cut ──────────────────────────────────────────────────────────────────
+bot.action("feat:cut", async (ctx) => {
+  await ctx.answerCbQuery();
+  setSession(ctx.from.id, { feature: "cut", step: "cut_url", data: {} });
+  await ctx.reply(
+    `✂️ <b>Clip Cut</b>\n\n<b>Step 1 of 3</b> — Send your YouTube link:\n\n<code>https://youtu.be/abc123</code>`,
+    { parse_mode: "HTML", ...CANCEL_KB },
+  );
+});
+
+// ── Subtitles ─────────────────────────────────────────────────────────────────
+bot.action("feat:subtitles", async (ctx) => {
+  await ctx.answerCbQuery();
+  setSession(ctx.from.id, {
+    feature: "subtitles",
+    step: "subtitles_url",
+    data: {},
+  });
+  await ctx.reply(
+    `📝 <b>Subtitles</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n<code>https://youtu.be/abc123</code>\n\n<i>Subtitles will be sent as a .srt file</i>`,
+    { parse_mode: "HTML", ...CANCEL_KB },
+  );
+});
+
+// ── Timestamps ────────────────────────────────────────────────────────────────
+bot.action("feat:timestamps", async (ctx) => {
+  await ctx.answerCbQuery();
+  setSession(ctx.from.id, {
+    feature: "timestamps",
+    step: "timestamps_url",
+    data: {},
+  });
+  await ctx.reply(
+    `⏱ <b>AI Timestamps</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n<code>https://youtu.be/abc123</code>\n\n<i>Optionally add instructions after the link:\n<code>https://youtu.be/abc123  Make 10 detailed chapters</code></i>`,
+    { parse_mode: "HTML", ...CANCEL_KB },
+  );
+});
+
+// ── Download ──────────────────────────────────────────────────────────────────
+bot.action("feat:download", async (ctx) => {
+  await ctx.answerCbQuery();
+  setSession(ctx.from.id, {
+    feature: "download",
+    step: "download_url",
+    data: {},
+  });
+  await ctx.reply(
+    `⬇️ <b>Download</b>\n\nStep 1 of 2 — Send your YouTube link:\n\n<code>https://youtu.be/abc123</code>`,
+    { parse_mode: "HTML", ...CANCEL_KB },
+  );
+});
+
+// ── Download type buttons ─────────────────────────────────────────────────────
 bot.action("dl:video", async (ctx) => {
   await ctx.answerCbQuery();
   const session = getSession(ctx.from.id);
   const url = session.data?.["url"] as string | undefined;
   if (!url) {
-    await ctx.reply(
-      "⚠️ Session expired. Please start again:",
-      MAIN_MENU,
-    );
+    await ctx.reply("⚠️ Session expired. Please start again:", MAIN_MENU);
     return;
   }
   clearSession(ctx.from.id);
@@ -597,42 +513,13 @@ bot.action("dl:audio", async (ctx) => {
   const session = getSession(ctx.from.id);
   const url = session.data?.["url"] as string | undefined;
   if (!url) {
-    await ctx.reply(
-      "⚠️ Session expired. Please start again:",
-      MAIN_MENU,
-    );
+    await ctx.reply("⚠️ Session expired. Please start again:", MAIN_MENU);
     return;
   }
   clearSession(ctx.from.id);
   await ctx.reply("✅ Extracting audio…");
   await runJob(ctx, "download", "download", { url, audioOnly: true });
 });
-
-// Feature buttons
-for (const feat of [
-  "clips",
-  "cut",
-  "subtitles",
-  "timestamps",
-  "download",
-  "bhagwat",
-  "thumbnail",
-  "agent",
-  "uploads",
-] as Feature[]) {
-  bot.action(`feat:${feat}`, async (ctx) => {
-    await ctx.answerCbQuery();
-    setSession(ctx.from.id, {
-      feature: feat,
-      step: "awaiting_input",
-      data: {},
-    });
-    await ctx.reply(FEATURE_PROMPTS[feat], {
-      parse_mode: "HTML",
-      ...CANCEL_KB,
-    });
-  });
-}
 
 // ─── Text Handler ─────────────────────────────────────────────────────────────
 
@@ -644,180 +531,180 @@ bot.on("text", async (ctx) => {
 
   const session = getSession(userId);
 
-  if (session.step !== "awaiting_input" && session.step !== "awaiting_dl_type") {
+  if (!session.step) {
+    await ctx.reply("👇 Choose a feature to get started:", MAIN_MENU);
+    return;
+  }
+
+  // ── Clip Cut: 3-step form ──────────────────────────────────────────────────
+
+  if (session.step === "cut_url") {
+    if (!isValidUrl(text)) {
+      await ctx.reply(
+        `❌ That doesn't look like a valid link.\n\nPlease send a YouTube URL:\n<code>https://youtu.be/abc123</code>`,
+        { parse_mode: "HTML", ...CANCEL_KB },
+      );
+      return;
+    }
+    setSession(userId, { step: "cut_start", data: { url: text } });
     await ctx.reply(
-      "👇 Choose a feature to get started:",
-      MAIN_MENU,
+      `✂️ <b>Clip Cut</b>\n\n<b>Step 2 of 3</b> — Send the <b>start time</b> of your clip:\n\n` +
+        `Examples: <code>1:23</code>  or  <code>83</code>  or  <code>0:01:23</code>`,
+      { parse_mode: "HTML", ...CANCEL_KB },
     );
     return;
   }
 
-  // If waiting for download type picker but user typed text
-  if (session.step === "awaiting_dl_type") {
+  if (session.step === "cut_start") {
+    const start = parseSeconds(text);
+    if (start === null) {
+      await ctx.reply(
+        `❌ <b>Invalid time</b>\n\nAccepted formats:\n• MM:SS → <code>1:23</code>\n• Seconds → <code>83</code>\n• HH:MM:SS → <code>0:01:23</code>`,
+        { parse_mode: "HTML", ...CANCEL_KB },
+      );
+      return;
+    }
+    setSession(userId, {
+      step: "cut_end",
+      data: { ...session.data, startTime: start },
+    });
     await ctx.reply(
-      "👆 Please tap <b>Video</b> or <b>Audio</b> above.",
+      `✂️ <b>Clip Cut</b>\n\n<b>Step 3 of 3</b> — Send the <b>end time</b> of your clip:\n\n` +
+        `Start: <code>${fmtTime(start)}</code>\n` +
+        `Examples: <code>2:45</code>  or  <code>165</code>  or  <code>0:02:45</code>`,
+      { parse_mode: "HTML", ...CANCEL_KB },
+    );
+    return;
+  }
+
+  if (session.step === "cut_end") {
+    const end = parseSeconds(text);
+    const start = session.data?.["startTime"] as number;
+    const url = session.data?.["url"] as string;
+
+    if (end === null) {
+      await ctx.reply(
+        `❌ <b>Invalid time</b>\n\nAccepted formats:\n• MM:SS → <code>2:45</code>\n• Seconds → <code>165</code>\n• HH:MM:SS → <code>0:02:45</code>`,
+        { parse_mode: "HTML", ...CANCEL_KB },
+      );
+      return;
+    }
+    if (end <= start) {
+      await ctx.reply(
+        `❌ End time must be <b>after</b> start time.\n\nStart: <code>${fmtTime(start)}</code>\nYour end: <code>${fmtTime(end)}</code>\n\nSend a later end time:`,
+        { parse_mode: "HTML", ...CANCEL_KB },
+      );
+      return;
+    }
+
+    clearSession(userId);
+    await ctx.reply(
+      `✅ <b>Cutting clip</b>\n\nFrom <code>${fmtTime(start)}</code> to <code>${fmtTime(end)}</code> (${fmtTime(end - start)} long)`,
+      { parse_mode: "HTML" },
+    );
+    await runJob(ctx, "cut", "clip-cut", {
+      url,
+      startTime: start,
+      endTime: end,
+    });
+    return;
+  }
+
+  // ── Download: ask type via buttons after URL ───────────────────────────────
+
+  if (session.step === "download_url") {
+    if (!isValidUrl(text)) {
+      await ctx.reply(
+        `❌ Please send a valid YouTube URL:\n<code>https://youtu.be/abc123</code>`,
+        { parse_mode: "HTML", ...CANCEL_KB },
+      );
+      return;
+    }
+    setSession(userId, { step: "download_type", data: { url: text } });
+    await ctx.reply(
+      `⬇️ <b>Step 2 of 2</b> — What do you want to download?`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback("🎬 Full Video (MP4)", "dl:video"),
+            Markup.button.callback("🎵 Audio Only (MP3)", "dl:audio"),
+          ],
+          [Markup.button.callback("❌ Cancel", "cancel")],
+        ]),
+      },
+    );
+    return;
+  }
+
+  if (session.step === "download_type") {
+    await ctx.reply(
+      `👆 Please tap <b>Video</b> or <b>Audio</b> on the message above.`,
       { parse_mode: "HTML" },
     );
     return;
   }
 
-  const feature = session.feature!;
+  // ── Single-step features ───────────────────────────────────────────────────
 
-  // ── URL-required features ──────────────────────────────────────────────────
-
-  const needsUrl: Feature[] = [
-    "clips", "cut", "subtitles", "timestamps",
-    "download", "bhagwat", "thumbnail", "uploads",
-  ];
-
-  if (needsUrl.includes(feature)) {
-    const firstToken = text.split(/\s+/)[0]!;
-    if (!isValidUrl(firstToken)) {
+  if (session.step === "clips_url") {
+    if (!isValidUrl(text.split(/\s+/)[0]!)) {
       await ctx.reply(
-        `❌ <b>Please paste a valid URL</b>\n\nMust start with <code>https://</code>\n\nExample: <code>https://youtu.be/abc123</code>`,
+        `❌ Please send a valid YouTube URL:\n<code>https://youtu.be/abc123</code>`,
         { parse_mode: "HTML", ...CANCEL_KB },
       );
-      return; // Keep session active so they can retry
+      return;
     }
+    const parts = text.split(/\s+/);
+    const url = parts[0]!;
+    const durStr = parts[1];
+    const durations = durStr
+      ? durStr.split(",").map(Number).filter((n) => !isNaN(n) && n > 0)
+      : [30, 60];
+    clearSession(userId);
+    await ctx.reply("🎬 Analysing video to find the best clips…");
+    await runJob(ctx, "clips", "clips", { url, durations, auto: true });
+    return;
   }
 
-  // ── Feature-specific logic ─────────────────────────────────────────────────
-
-  switch (feature) {
-    case "clips": {
-      const parts = text.split(/\s+/);
-      const url = parts[0]!;
-      const durStr = parts[1];
-      const durations = durStr
-        ? durStr
-            .split(",")
-            .map(Number)
-            .filter((n) => !isNaN(n) && n > 0)
-        : [30, 60];
-      clearSession(userId);
-      await ctx.reply("🎬 Finding best clips…");
-      await runJob(ctx, feature, "clips", { url, durations, auto: true });
-      break;
-    }
-
-    case "cut": {
-      const parts = text.split(/\s+/);
-      if (parts.length < 3) {
-        await ctx.reply(
-          `❌ <b>Need 3 parts:</b> URL, start time, end time\n\nExample:\n<code>https://youtu.be/abc123  1:23  2:45</code>`,
-          { parse_mode: "HTML", ...CANCEL_KB },
-        );
-        return; // Keep session
-      }
-      const start = parseSeconds(parts[1]!);
-      const end = parseSeconds(parts[2]!);
-      if (start === null || end === null) {
-        await ctx.reply(
-          `❌ <b>Invalid time format</b>\n\nAccepted formats:\n• Seconds: <code>90</code>\n• MM:SS: <code>1:30</code>\n• HH:MM:SS: <code>0:01:30</code>\n\nExample:\n<code>https://youtu.be/abc123  1:23  2:45</code>`,
-          { parse_mode: "HTML", ...CANCEL_KB },
-        );
-        return; // Keep session
-      }
-      if (start >= end) {
-        await ctx.reply(
-          `❌ Start time must be <b>before</b> end time.\n\nYou entered: <code>${fmtTime(start)}</code> → <code>${fmtTime(end)}</code>`,
-          { parse_mode: "HTML", ...CANCEL_KB },
-        );
-        return; // Keep session
-      }
-      clearSession(userId);
-      await ctx.reply(`✂️ Cutting: <code>${fmtTime(start)}</code> → <code>${fmtTime(end)}</code>…`, { parse_mode: "HTML" });
-      await runJob(ctx, feature, "clip-cut", {
-        url: parts[0]!,
-        startTime: start,
-        endTime: end,
-      });
-      break;
-    }
-
-    case "subtitles": {
-      const parts = text.split(/\s+/);
-      const url = parts[0]!;
-      const language = parts[1] ?? "auto";
-      clearSession(userId);
-      await ctx.reply("📝 Generating subtitles…");
-      await runJob(ctx, feature, "subtitles", { url, language });
-      break;
-    }
-
-    case "timestamps": {
-      const spaceIdx = text.indexOf(" ");
-      const url = spaceIdx !== -1 ? text.slice(0, spaceIdx) : text;
-      const instructions = spaceIdx !== -1 ? text.slice(spaceIdx + 1) : undefined;
-      clearSession(userId);
-      await ctx.reply("⏱ Generating timestamps…");
-      await runJob(ctx, feature, "timestamps", {
-        url,
-        ...(instructions ? { instructions } : {}),
-      });
-      break;
-    }
-
-    case "download": {
-      const url = text.split(/\s+/)[0]!;
-      setSession(userId, {
-        feature: "download",
-        step: "awaiting_dl_type",
-        data: { url },
-      });
+  if (session.step === "subtitles_url") {
+    const url = text.split(/\s+/)[0]!;
+    if (!isValidUrl(url)) {
       await ctx.reply(
-        `⬇️ <b>What do you want to download?</b>\n\n<code>${esc(url)}</code>`,
-        {
-          parse_mode: "HTML",
-          ...Markup.inlineKeyboard([
-            [
-              Markup.button.callback("🎬 Full Video (MP4)", "dl:video"),
-              Markup.button.callback("🎵 Audio Only (MP3)", "dl:audio"),
-            ],
-            [Markup.button.callback("❌ Cancel", "cancel")],
-          ]),
-        },
+        `❌ Please send a valid YouTube URL:\n<code>https://youtu.be/abc123</code>`,
+        { parse_mode: "HTML", ...CANCEL_KB },
       );
-      break;
+      return;
     }
-
-    case "bhagwat": {
-      const url = text.split(/\s+/)[0]!;
-      clearSession(userId);
-      await ctx.reply("📖 Processing with Bhagwat AI…");
-      await runJob(ctx, feature, "bhagwat", { url });
-      break;
-    }
-
-    case "thumbnail": {
-      const url = text.split(/\s+/)[0]!;
-      clearSession(userId);
-      await ctx.reply("🖼 Generating thumbnail…");
-      await runJob(ctx, feature, "thumbnail", { url });
-      break;
-    }
-
-    case "agent": {
-      const isUrl = text.startsWith("http");
-      const spaceIdx = text.indexOf(" ");
-      const payload: Record<string, unknown> = isUrl
-        ? { url: spaceIdx !== -1 ? text.slice(0, spaceIdx) : text }
-        : { message: text };
-      if (isUrl && spaceIdx !== -1) payload["instructions"] = text.slice(spaceIdx + 1);
-      clearSession(userId);
-      await ctx.reply("🤖 AI Copilot thinking…");
-      await runJob(ctx, feature, "agent", payload);
-      break;
-    }
-
-    case "uploads": {
-      const url = text.split(/\s+/)[0]!;
-      clearSession(userId);
-      await ctx.reply("☁️ Uploading…");
-      await runJob(ctx, feature, "uploads", { url });
-      break;
-    }
+    clearSession(userId);
+    await ctx.reply("📝 Generating subtitles…");
+    await runJob(ctx, "subtitles", "subtitles", { url, language: "auto" });
+    return;
   }
+
+  if (session.step === "timestamps_url") {
+    const spaceIdx = text.indexOf(" ");
+    const url = spaceIdx !== -1 ? text.slice(0, spaceIdx) : text;
+    if (!isValidUrl(url)) {
+      await ctx.reply(
+        `❌ Please send a valid YouTube URL:\n<code>https://youtu.be/abc123</code>`,
+        { parse_mode: "HTML", ...CANCEL_KB },
+      );
+      return;
+    }
+    const instructions =
+      spaceIdx !== -1 ? text.slice(spaceIdx + 1).trim() : undefined;
+    clearSession(userId);
+    await ctx.reply("⏱ Generating chapter timestamps…");
+    await runJob(ctx, "timestamps", "timestamps", {
+      url,
+      ...(instructions ? { instructions } : {}),
+    });
+    return;
+  }
+
+  // Fallback
+  await ctx.reply("👇 Choose a feature to get started:", MAIN_MENU);
 });
 
 bot.catch((err) => {
