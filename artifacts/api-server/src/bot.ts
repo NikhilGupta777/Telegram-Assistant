@@ -30,6 +30,7 @@ const jobs = new MemoryJobStore();
 
 export const bot = createBot(token, {
   allowedUsers: process.env["ALLOWED_USERS"] ? process.env["ALLOWED_USERS"].split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)) : undefined,
+  allowedChats: process.env["ALLOWED_CHATS"] ? process.env["ALLOWED_CHATS"].split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)) : undefined,
   sessions,
   jobs,
   onSeenUser: upsertUser,

@@ -14,6 +14,7 @@ export interface BotConfig {
   tableName?: string;
   databaseUrl?: string;
   allowedUsers?: number[];
+  allowedChats?: number[];
 }
 
 let cached: BotConfig | undefined;
@@ -35,6 +36,7 @@ export function configFromEnv(): BotConfig {
     ...(get("TABLE_NAME") ? { tableName: get("TABLE_NAME")! } : {}),
     ...(get("DATABASE_URL") ? { databaseUrl: get("DATABASE_URL")! } : {}),
     ...(get("ALLOWED_USERS") ? { allowedUsers: get("ALLOWED_USERS")!.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)) } : {}),
+    ...(get("ALLOWED_CHATS") ? { allowedChats: get("ALLOWED_CHATS")!.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)) } : {}),
   };
 }
 
@@ -53,6 +55,7 @@ export async function loadConfigFromSsm(): Promise<BotConfig> {
     vmsApiKey: process.env["SSM_VMS_API_KEY"],
     vmsWebhookSecret: process.env["SSM_VMS_WEBHOOK_SECRET"],
     allowedUsers: process.env["SSM_ALLOWED_USERS"],
+    allowedChats: process.env["SSM_ALLOWED_CHATS"],
   };
 
   const wanted = Object.values(names).filter((n): n is string => !!n);
@@ -87,6 +90,11 @@ export async function loadConfigFromSsm(): Promise<BotConfig> {
   const allowedUsersStr = pick(names.allowedUsers, "ALLOWED_USERS");
   if (allowedUsersStr) {
     cached.allowedUsers = allowedUsersStr.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n));
+  }
+  
+  const allowedChatsStr = pick(names.allowedChats, "ALLOWED_CHATS");
+  if (allowedChatsStr) {
+    cached.allowedChats = allowedChatsStr.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n));
   }
 
   // Mirror into env so vms.ts (which reads process.env) works unchanged.

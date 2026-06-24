@@ -86,6 +86,7 @@ export interface BotDeps {
     }[]
   >;
   allowedUsers?: number[];
+  allowedChats?: number[];
 }
 
 export function createBot(token: string, deps: BotDeps): Telegraf {
@@ -128,11 +129,16 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     }
 
     for (const r of action.replies) {
-      const markup = kb(r.keyboard);
-      const extra = { parse_mode: "HTML" as const, ...(markup ?? {}) };
+      const markup = kb(r.keyboard) ?? {};
+      const extra: any = { parse_mode: "HTML", ...markup };
+      
+      if (r.forceReply) {
+        extra.reply_markup = { ...extra.reply_markup, force_reply: true, selective: true };
+      }
 
       // Try to edit the previous prompt when we're mid-flow (not clearing session).
-      const canEdit = prevBotMsgId != null && action.session !== null && action.session?.step;
+      // ForceReply can only be sent on new messages, not edits.
+      const canEdit = !r.forceReply && prevBotMsgId != null && action.session !== null && action.session?.step;
       if (canEdit) {
         try {
           await ctx.telegram.editMessageText(chatId, prevBotMsgId, undefined, r.text, extra);
@@ -178,11 +184,21 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   }
 
   // ── Access Control ──
-  if (deps.allowedUsers && deps.allowedUsers.length > 0) {
+  const { allowedUsers, allowedChats } = deps;
+  if ((allowedUsers && allowedUsers.length > 0) || (allowedChats && allowedChats.length > 0)) {
     bot.use(async (ctx, next) => {
       const userId = ctx.from?.id;
-      if (userId && !deps.allowedUsers!.includes(userId)) {
-        await ctx.reply("⛔️ Unauthorized. This bot is private.");
+      const chatId = ctx.chat?.id;
+      const chatType = ctx.chat?.type;
+
+      const userAllowed = userId && allowedUsers?.includes(userId);
+      const chatAllowed = chatId && allowedChats?.includes(chatId);
+
+      if (!userAllowed && !chatAllowed) {
+        // Only reply with unauthorized in private chats to avoid spamming groups
+        if (chatType === "private") {
+          await ctx.reply("⛔️ Unauthorized. This bot is private.");
+        }
         return;
       }
       return next();
@@ -303,6 +319,16 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     if (text.startsWith("/")) return; // commands handled above
     const userId = ctx.from.id;
     const session = await sessions.get(userId);
+
+    // In a group, only respond if there's an active session or it's a reply to the bot
+    if (
+      ctx.chat.type !== "private" &&
+      !session?.step &&
+      ctx.message.reply_to_message?.from?.id !== ctx.botInfo.id
+    ) {
+      return;
+    }
+
     await runAction(ctx, userId, handleText(session, text), session);
   });
 
@@ -310,6 +336,7 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   bot.on(
     ["photo", "document", "voice", "sticker", "video", "audio", "animation", "contact", "location"],
     async (ctx) => {
+      if (ctx.chat.type !== "private") return; // Don't spam groups with error messages
       await ctx.reply(
         "👇 I only work with YouTube links — choose a feature and paste your link:",
         { parse_mode: "HTML", ...MAIN_MENU },

@@ -34,7 +34,7 @@ export type Keyboard = "cancel" | "main" | "download_type" | "none";
  */
 export interface FlowAction {
   /** Reply text(s) to send, in order. HTML parse mode. */
-  replies: { text: string; keyboard?: Keyboard }[];
+  replies: { text: string; keyboard?: Keyboard; forceReply?: boolean }[];
   /** New session state to persist (null = clear session). */
   session: SessionState | null;
   /** If set, the adapter must start this VMS job. */
@@ -58,6 +58,7 @@ export function startFeature(feature: Feature): FlowAction {
           {
             text: `🎬 <b>Best Clips</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Optional: add clip lengths (seconds) after the link:\n<code>https://youtu.be/abc123  15,45,60</code></i>`,
             keyboard: "cancel",
+            forceReply: true,
           },
         ],
       };
@@ -68,6 +69,7 @@ export function startFeature(feature: Feature): FlowAction {
           {
             text: `✂️ <b>Clip Cut</b>\n\n<b>Step 1 of 3</b> — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Shortcut: send link + start + end in one go:\n<code>https://youtu.be/abc123  1:00  2:30</code></i>`,
             keyboard: "cancel",
+            forceReply: true,
           },
         ],
       };
@@ -78,6 +80,7 @@ export function startFeature(feature: Feature): FlowAction {
           {
             text: `📝 <b>Subtitles</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Result arrives as a .srt file.\nOptional: add a language code for translation:\n<code>https://youtu.be/abc123  hi</code> (Hindi)\n<code>https://youtu.be/abc123  en</code> (English)</i>`,
             keyboard: "cancel",
+            forceReply: true,
           },
         ],
       };
@@ -88,6 +91,7 @@ export function startFeature(feature: Feature): FlowAction {
           {
             text: `⏱ <b>AI Timestamps</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Optional: add instructions after the link:\n<code>https://youtu.be/abc123  Make 10 detailed chapters</code></i>`,
             keyboard: "cancel",
+            forceReply: true,
           },
         ],
       };
@@ -98,6 +102,7 @@ export function startFeature(feature: Feature): FlowAction {
           {
             text: `⬇️ <b>Download</b>\n\nStep 1 of 2 — Send your YouTube link:\n\n${URL_HINT}`,
             keyboard: "cancel",
+            forceReply: true,
           },
         ],
       };
@@ -171,6 +176,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
           {
             text: `✂️ <b>Clip Cut</b>\n\n<b>Step 2 of 3</b> — Send the <b>start time</b>:\n\nExamples: <code>1:23</code>  or  <code>83</code>  or  <code>0:01:23</code>`,
             keyboard: "cancel",
+            forceReply: true,
           },
         ],
       };
@@ -185,6 +191,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
           {
             text: `✂️ <b>Clip Cut</b>\n\n<b>Step 3 of 3</b> — Send the <b>end time</b>:\n\nStart: <code>${fmtTime(start)}</code>\nExamples: <code>2:45</code>  or  <code>165</code>  or  <code>0:02:45</code>`,
             keyboard: "cancel",
+            forceReply: true,
           },
         ],
       };
@@ -335,5 +342,5 @@ export function handleDownloadChoice(
 }
 
 function keep(session: SessionState, text: string, keyboard: Keyboard): FlowAction {
-  return { session, replies: [{ text, keyboard }] };
+  return { session, replies: [{ text, keyboard, forceReply: true }] };
 }

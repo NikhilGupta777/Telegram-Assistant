@@ -28,6 +28,10 @@ Parameters:
     Type: String
     Default: /bot/allowed-users
     Description: Optional SSM parameter name holding a comma-separated list of allowed Telegram user IDs.
+  AllowedChatsParam:
+    Type: String
+    Default: /bot/allowed-chats
+    Description: Optional SSM parameter name holding a comma-separated list of allowed Telegram chat/group IDs.
   DatabaseUrl:
     Type: String
     Default: ""
@@ -48,6 +52,7 @@ Globals:
         SSM_VMS_API_KEY: !Ref VmsApiKeyParam
         SSM_VMS_WEBHOOK_SECRET: !Ref VmsWebhookSecretParam
         SSM_ALLOWED_USERS: !Ref AllowedUsersParam
+        SSM_ALLOWED_CHATS: !Ref AllowedChatsParam
         DATABASE_URL: !Ref DatabaseUrl
 
 Resources:

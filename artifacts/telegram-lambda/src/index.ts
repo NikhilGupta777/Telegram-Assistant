@@ -64,6 +64,7 @@ async function getBot() {
 
     const bot = createBot(cfg.telegramBotToken, {
       allowedUsers: cfg.allowedUsers,
+      allowedChats: cfg.allowedChats,
       sessions: store,
       jobs: store,
       onSeenUser: upsertUser,
