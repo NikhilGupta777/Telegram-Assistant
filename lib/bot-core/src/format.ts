@@ -322,14 +322,14 @@ export function formatResult(
     }
 
     case "timestamps": {
-      type Chapter = { time?: number; label?: string; title?: string };
+      type Chapter = { time?: number; start?: number; startTime?: number; label?: string; title?: string };
       const ts = (result["timestamps"] ?? result["chapters"]) as
         | Chapter[]
         | undefined;
       if (Array.isArray(ts) && ts.length > 0) {
         const lines = ts.map(
           (t) =>
-            `<code>${fmtTime(t.time ?? 0)}</code> — ${esc(t.label ?? t.title ?? "Chapter")}`,
+            `<code>${fmtTime(t.time ?? t.start ?? t.startTime ?? 0)}</code> — ${esc(t.label ?? t.title ?? "Chapter")}`,
         );
         const header = `⏱ <b>AI Timestamps</b> (${ts.length} chapters)\n\n`;
         const footer = `\n\n<i>📋 Copy &amp; paste into your YouTube description</i>`;
