@@ -24,6 +24,7 @@ jobs:
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       STACK: narayan-bhakt-bot
+      SAM_BUCKET: narayan-bhakt-bot-sam-596596146505
     steps:
       - uses: actions/checkout@v4
 
@@ -61,7 +62,8 @@ jobs:
         run: |
           sam deploy \
             --stack-name "$STACK" \
-            --resolve-s3 \
+            --s3-bucket "$SAM_BUCKET" \
+            --s3-prefix "$STACK" \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --capabilities CAPABILITY_IAM
