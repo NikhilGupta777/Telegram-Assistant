@@ -6,11 +6,17 @@ import {
   createBot,
   retryKb,
   startJobForChat,
+  deliverResult,
   FEATURE_EMOJI,
 } from "@workspace/bot-core/telegram";
 import { loadConfigFromSsm } from "@workspace/bot-core/config";
 import { DynamoStore } from "@workspace/bot-core/dynamo";
-import { VmsError, friendlyError } from "@workspace/bot-core";
+import {
+  VmsError,
+  friendlyError,
+  isTerminal,
+  pollJob,
+} from "@workspace/bot-core";
 import { upsertUser, recordJobStart, recentJobs } from "@workspace/db/repo";
 import type { Telegraf } from "telegraf";
 import type { Context } from "telegraf";
@@ -92,6 +98,24 @@ async function getBot() {
             chatId,
             feature: job.feature,
           });
+
+          // Idempotency replay: when the user re-issues an identical clip-cut
+          // (same URL + same times → same Idempotency-Key), VMS short-circuits
+          // and returns the already-completed envelope without re-firing its
+          // webhook. The bot would otherwise wait forever for a webhook that
+          // never comes. Detect the terminal status and deliver inline.
+          if (isTerminal(started)) {
+            try {
+              const full = await pollJob(started.jobId).catch(() => started);
+              await deliverResult(ctx.telegram, chatId, job.feature, full, {
+                statusMessageId: status.message_id,
+              });
+            } finally {
+              await store.delete(started.jobId).catch(() => {});
+              await store.unlock(userId);
+            }
+            return;
+          }
         } catch (err) {
           await store.unlock(userId);
           const emoji = FEATURE_EMOJI[job.feature] ?? "";

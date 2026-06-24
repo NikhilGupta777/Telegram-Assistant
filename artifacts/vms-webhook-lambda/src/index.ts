@@ -8,6 +8,7 @@ import { DynamoStore } from "@workspace/bot-core/dynamo";
 import { deliverResult } from "@workspace/bot-core/telegram";
 import {
   verifySignature,
+  pollJob,
   type JobEnvelope,
   type VmsWebhookPayload,
 } from "@workspace/bot-core";
@@ -70,16 +71,35 @@ export async function handler(
   const errorCode = payload.errorCode ?? payload.error?.code ?? payload.code;
   const errorMessage = payload.message ?? payload.error?.message;
 
-  const job: JobEnvelope = {
-    jobId: payload.jobId,
-    status: payload.status,
-    ...(payload.succeeded !== undefined ? { succeeded: payload.succeeded } : {}),
-    ...(payload.failed !== undefined ? { failed: payload.failed } : {}),
-    ...(payload.result ? { result: payload.result } : {}),
-    ...(errorMessage ? { message: errorMessage } : {}),
-    ...(errorCode ? { errorCode } : {}),
-    terminal: true,
-  };
+  // The webhook body itself is just a "ready" ping — VMS doesn't include
+  // `result.url` in it. Fetch the full envelope via the public jobs API so
+  // we get the signed download URL (and any other result metadata) before
+  // delivering. On poll failure we fall back to the ping-derived envelope
+  // so behaviour never regresses below what we had before.
+  let job: JobEnvelope;
+  try {
+    const fetched = await pollJob(payload.jobId);
+    job = {
+      ...fetched,
+      terminal: true,
+      ...(payload.succeeded !== undefined ? { succeeded: payload.succeeded } : {}),
+      ...(payload.failed !== undefined ? { failed: payload.failed } : {}),
+      ...(errorMessage ? { message: errorMessage } : fetched.message ? { message: fetched.message } : {}),
+      ...(errorCode ? { errorCode } : {}),
+    };
+  } catch (err) {
+    console.warn("[vms-webhook] pollJob failed, using ping payload as fallback", err);
+    job = {
+      jobId: payload.jobId,
+      status: payload.status,
+      ...(payload.succeeded !== undefined ? { succeeded: payload.succeeded } : {}),
+      ...(payload.failed !== undefined ? { failed: payload.failed } : {}),
+      ...(payload.result ? { result: payload.result } : {}),
+      ...(errorMessage ? { message: errorMessage } : {}),
+      ...(errorCode ? { errorCode } : {}),
+      terminal: true,
+    };
+  }
 
   try {
     await deliverResult(telegram, mapping.chatId, mapping.feature, job, {
