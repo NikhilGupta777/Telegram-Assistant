@@ -85,6 +85,7 @@ export interface BotDeps {
       createdAt: Date;
     }[]
   >;
+  allowedUsers?: number[];
 }
 
 export function createBot(token: string, deps: BotDeps): Telegraf {
@@ -174,6 +175,18 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     // Always release the lock (concurrency / rate limiter state) and clear session.
     await deps.jobs.unlock(userId).catch(() => {});
     await sessions.clear(userId);
+  }
+
+  // ── Access Control ──
+  if (deps.allowedUsers && deps.allowedUsers.length > 0) {
+    bot.use(async (ctx, next) => {
+      const userId = ctx.from?.id;
+      if (userId && !deps.allowedUsers!.includes(userId)) {
+        await ctx.reply("⛔️ Unauthorized. This bot is private.");
+        return;
+      }
+      return next();
+    });
   }
 
   // Track every interacting user FIRST (best-effort, non-blocking), so it runs

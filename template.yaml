@@ -24,6 +24,10 @@ Parameters:
     Type: String
     Default: /bot/vms-webhook-secret
     Description: SSM parameter name holding the VMS webhook signing secret.
+  AllowedUsersParam:
+    Type: String
+    Default: /bot/allowed-users
+    Description: Optional SSM parameter name holding a comma-separated list of allowed Telegram user IDs.
   DatabaseUrl:
     Type: String
     Default: ""
@@ -43,6 +47,7 @@ Globals:
         SSM_TELEGRAM_WEBHOOK_SECRET: !Ref TelegramWebhookSecretParam
         SSM_VMS_API_KEY: !Ref VmsApiKeyParam
         SSM_VMS_WEBHOOK_SECRET: !Ref VmsWebhookSecretParam
+        SSM_ALLOWED_USERS: !Ref AllowedUsersParam
         DATABASE_URL: !Ref DatabaseUrl
 
 Resources:

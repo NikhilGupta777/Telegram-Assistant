@@ -13,6 +13,7 @@ export interface BotConfig {
   vmsWebhookBaseUrl?: string;
   tableName?: string;
   databaseUrl?: string;
+  allowedUsers?: number[];
 }
 
 let cached: BotConfig | undefined;
@@ -33,6 +34,7 @@ export function configFromEnv(): BotConfig {
     ...(get("VMS_WEBHOOK_BASE_URL") ? { vmsWebhookBaseUrl: get("VMS_WEBHOOK_BASE_URL")! } : {}),
     ...(get("TABLE_NAME") ? { tableName: get("TABLE_NAME")! } : {}),
     ...(get("DATABASE_URL") ? { databaseUrl: get("DATABASE_URL")! } : {}),
+    ...(get("ALLOWED_USERS") ? { allowedUsers: get("ALLOWED_USERS")!.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)) } : {}),
   };
 }
 
@@ -50,6 +52,7 @@ export async function loadConfigFromSsm(): Promise<BotConfig> {
     telegramWebhookSecret: process.env["SSM_TELEGRAM_WEBHOOK_SECRET"],
     vmsApiKey: process.env["SSM_VMS_API_KEY"],
     vmsWebhookSecret: process.env["SSM_VMS_WEBHOOK_SECRET"],
+    allowedUsers: process.env["SSM_ALLOWED_USERS"],
   };
 
   const wanted = Object.values(names).filter((n): n is string => !!n);
@@ -80,6 +83,11 @@ export async function loadConfigFromSsm(): Promise<BotConfig> {
     ...(process.env["TABLE_NAME"] ? { tableName: process.env["TABLE_NAME"] } : {}),
     ...(process.env["DATABASE_URL"] ? { databaseUrl: process.env["DATABASE_URL"] } : {}),
   };
+  
+  const allowedUsersStr = pick(names.allowedUsers, "ALLOWED_USERS");
+  if (allowedUsersStr) {
+    cached.allowedUsers = allowedUsersStr.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n));
+  }
 
   // Mirror into env so vms.ts (which reads process.env) works unchanged.
   process.env["VMS_API_KEY"] = cached.vmsApiKey;

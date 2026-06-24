@@ -63,6 +63,7 @@ async function getBot() {
     const vmsWebhookUrl = cfg.vmsWebhookBaseUrl;
 
     const bot = createBot(cfg.telegramBotToken, {
+      allowedUsers: cfg.allowedUsers,
       sessions: store,
       jobs: store,
       onSeenUser: upsertUser,
