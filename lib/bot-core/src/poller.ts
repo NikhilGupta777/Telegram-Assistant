@@ -40,7 +40,8 @@ export async function runJobPoller(
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 3000;
   const stopAfterMs = opts.stopAfterMs ?? 5 * 60 * 1000;
-  const deadline = Date.now() + stopAfterMs;
+  const t0 = Date.now();
+  const deadline = t0 + stopAfterMs;
 
   while (Date.now() < deadline) {
     let job;
@@ -76,8 +77,11 @@ export async function runJobPoller(
 
     // Mid-flight; check if the webhook delivered while we were polling.
     // If the JOB# row is gone, the webhook handler already finished — bail.
-    const stillRegistered = await deps.jobs.getJob(event.jobId);
-    if (!stillRegistered) return;
+    // Only check and bail after 6 seconds to prevent any DB propagation/invocation race.
+    if (Date.now() - t0 > 6000) {
+      const stillRegistered = await deps.jobs.getJob(event.jobId);
+      if (!stillRegistered) return;
+    }
 
     await sleep(intervalMs);
   }

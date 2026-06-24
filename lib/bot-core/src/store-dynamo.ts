@@ -87,7 +87,11 @@ export class DynamoStore implements SessionStore, JobStore {
 
   async getJob(jobId: string): Promise<JobMapping | null> {
     const r = await this.doc.send(
-      new GetCommand({ TableName: this.table, Key: { pk: `JOB#${jobId}` } }),
+      new GetCommand({
+        TableName: this.table,
+        Key: { pk: `JOB#${jobId}` },
+        ConsistentRead: true,
+      }),
     );
     if (!r.Item) return null;
     const { pk: _pk, ttl: _ttl, ...mapping } = r.Item as Record<string, unknown>;
