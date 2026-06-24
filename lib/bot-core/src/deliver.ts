@@ -4,6 +4,33 @@ import type { JobEnvelope } from "./vms.js";
 import { MAIN_MENU, retryKb } from "./keyboards.js";
 
 /**
+ * Resolves the authenticated VMS redirector URL to its public S3 presigned destination.
+ * Safe fallback: returns the original URL on network errors or auth failures.
+ */
+async function resolveMediaUrl(url: string): Promise<string> {
+  const apiKey = process.env["VMS_API_KEY"];
+  if (!apiKey) return url;
+
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      redirect: "manual",
+    });
+
+    if (res.status === 302 || res.status === 301 || res.status === 307 || res.status === 308) {
+      const location = res.headers.get("location");
+      if (location) return location;
+    }
+  } catch (err) {
+    console.error("[deliver] Failed to resolve media redirect:", err);
+  }
+  return url;
+}
+
+/**
  * Deliver a finished VMS job to a Telegram chat. Host-agnostic: works from
  * Lambda B (webhook) and from the local runner (after polling).
  *
@@ -28,6 +55,20 @@ export async function deliverResult(
       await telegram.deleteMessage(chatId, opts.statusMessageId);
     } catch {
       /* already gone */
+    }
+  }
+
+  // Resolve VMS redirector URL to a direct public S3 presigned URL
+  const originalUrl = (job.result?.["url"] ??
+    job.result?.["downloadUrl"] ??
+    job.result?.["fileUrl"]) as string | undefined;
+
+  if (originalUrl) {
+    const publicUrl = await resolveMediaUrl(originalUrl);
+    if (job.result) {
+      if (job.result["url"]) job.result["url"] = publicUrl;
+      if (job.result["downloadUrl"]) job.result["downloadUrl"] = publicUrl;
+      if (job.result["fileUrl"]) job.result["fileUrl"] = publicUrl;
     }
   }
 
