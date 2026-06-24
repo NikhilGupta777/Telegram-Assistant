@@ -384,17 +384,17 @@ export function formatJobStart(feature: Feature, payload: Record<string, unknown
       const start = payload.startTime as number | undefined;
       const end = payload.endTime as number | undefined;
       if (start != null && end != null) {
-        return `✂️ <b>Cutting clip</b> (${fmtTime(start)} to ${fmtTime(end)})\n\n`;
+        return `✂️ <b>Cutting clip</b> (${fmtTime(start)} to ${fmtTime(end)})`;
       }
-      return `✂️ <b>Cutting clip</b>\n\n`;
+      return `✂️ <b>Cutting clip</b>`;
     }
     case "clips":
-      return `🎬 <b>Finding best clips</b>\n\n`;
+      return `🎬 <b>Finding best clips</b>`;
     case "download":
-      return `⬇️ <b>${payload.audioOnly ? "Extracting audio" : "Downloading video"}</b>\n\n`;
+      return `⬇️ <b>${payload.audioOnly ? "Extracting audio" : "Downloading video"}</b>`;
     case "subtitles":
-      return `📝 <b>Generating subtitles & transcript</b>\n\n`;
+      return `📝 <b>Generating subtitles & transcript</b>`;
     case "timestamps":
-      return `⏱ <b>Generating AI timestamps</b>\n\n`;
+      return `⏱ <b>Generating AI timestamps</b>`;
   }
 }

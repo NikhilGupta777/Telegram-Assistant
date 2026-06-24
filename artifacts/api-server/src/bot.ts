@@ -55,7 +55,7 @@ export const bot = createBot(token, {
     let started: any;
     try {
       const prefix = formatJobStart(job.feature, job.payload);
-      const status = await ctx.reply(`${prefix}⏳ <b>Working on it…</b>\n\n🔄 Starting up…`, {
+      const status = await ctx.reply(prefix, {
         parse_mode: "HTML",
       });
       statusMessageId = status.message_id;
@@ -89,7 +89,7 @@ export const bot = createBot(token, {
             chatId,
             statusMessageId!,
             undefined,
-            `${prefix}⏳ <b>Working on it…</b>\n\n🔄 ${msg}${pct}`,
+            `${prefix} (🔄 ${msg}${pct})`,
             { parse_mode: "HTML" },
           );
         } catch {

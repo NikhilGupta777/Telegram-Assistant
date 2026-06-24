@@ -93,7 +93,7 @@ async function getBot() {
 
           const prefix = formatJobStart(job.feature, job.payload);
           const status = await ctx.reply(
-            `${prefix}⏳ <b>Working on it…</b>\n\n🔄 Starting up…`,
+            prefix,
             { parse_mode: "HTML" },
           );
 
