@@ -53,6 +53,7 @@ Globals:
         SSM_VMS_WEBHOOK_SECRET: !Ref VmsWebhookSecretParam
         SSM_ALLOWED_USERS: !Ref AllowedUsersParam
         SSM_ALLOWED_CHATS: !Ref AllowedChatsParam
+        ALLOWED_CHATS: "-1003503262407"
         DATABASE_URL: !Ref DatabaseUrl
 
 Resources:
