@@ -95,6 +95,8 @@ export const bot = createBot(token, {
 
       await deliverResult(ctx.telegram, chatId, job.feature, done, {
         statusMessageId,
+        username: ctx.from?.username ?? ctx.from?.first_name,
+        payload: job.payload,
       });
       await recordJobFinish({
         id: started.jobId,

@@ -145,11 +145,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
         }
         return {
           session: null,
-          replies: [
-            {
-              text: `✅ <b>Cutting clip</b>\n\nFrom <code>${fmtTime(start)}</code> to <code>${fmtTime(end)}</code> (${fmtTime(end - start)} long)`,
-            },
-          ],
+          replies: [],
           startJob: {
             feature: "cut",
             endpoint: "clip-cut",
@@ -256,11 +252,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
       }
       return {
         session: null,
-        replies: [
-          {
-            text: `✅ <b>Cutting clip</b>\n\nFrom <code>${fmtTime(start)}</code> to <code>${fmtTime(end)}</code> (${fmtTime(end - start)} long)`,
-          },
-        ],
+        replies: [],
         startJob: {
           feature: "cut",
           endpoint: "clip-cut",
@@ -306,7 +298,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
           .filter((n) => Number.isFinite(n) && n > 0) ?? [];
       return {
         session: null,
-        replies: [{ text: "🎬 Analysing video to find the best clips…" }],
+        replies: [],
         startJob: {
           feature: "clips",
           endpoint: "clips",
@@ -323,10 +315,9 @@ export function handleText(session: SessionState, text: string): FlowAction {
       const url = parts[0] ?? "";
       if (!isYouTubeUrl(url)) return keep(session, INVALID_URL_MSG, "cancel");
       const lang = parts[1]?.trim().toLowerCase() || "auto";
-      const langNote = lang !== "auto" ? ` in <b>${esc(lang)}</b>` : "";
       return {
         session: null,
-        replies: [{ text: `📝 Generating subtitles${langNote}…` }],
+        replies: [],
         startJob: {
           feature: "subtitles",
           endpoint: "subtitles",
@@ -341,7 +332,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
       const instructions = spaceIdx !== -1 ? t.slice(spaceIdx + 1).trim() : undefined;
       return {
         session: null,
-        replies: [{ text: "⏱ Generating chapter timestamps…" }],
+        replies: [],
         startJob: {
           feature: "timestamps",
           endpoint: "timestamps",
@@ -369,11 +360,7 @@ export function handleDownloadChoice(
   const typeLabel = audioOnly ? "🎵 Audio (MP3)" : "🎬 Video (MP4)";
   return {
     session: null,
-    replies: [
-      {
-        text: `✅ ${audioOnly ? "Extracting audio" : "Downloading video"}…\n\n${typeLabel}\n<code>${esc(url)}</code>`,
-      },
-    ],
+    replies: [],
     startJob: {
       feature: "download",
       endpoint: "download",
