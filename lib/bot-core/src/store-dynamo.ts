@@ -149,4 +149,33 @@ export class DynamoStore implements SessionStore, JobStore {
       new DeleteCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } }),
     );
   }
+
+  /**
+   * Atomic exactly-once delivery claim. The webhook (Lambda B) and the
+   * poller (Lambda A self-invoke) both race to deliver the same job. The
+   * first to set `delivered=true` wins and sends to Telegram; the loser
+   * sees a ConditionalCheckFailedException and skips delivery.
+   */
+  async markDelivered(jobId: string): Promise<boolean> {
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.table,
+          Key: { pk: `JOB#${jobId}` },
+          UpdateExpression: "SET delivered = :t",
+          ConditionExpression: "attribute_not_exists(delivered)",
+          ExpressionAttributeValues: { ":t": true },
+        }),
+      );
+      return true;
+    } catch (err) {
+      if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+        return false;
+      }
+      // For unrelated DDB errors (network, throttling) we BAIL by returning
+      // false. Better to skip a delivery than to send duplicates. The retry
+      // path on the other side will catch it.
+      return false;
+    }
+  }
 }

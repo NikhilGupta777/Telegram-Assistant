@@ -71,6 +71,13 @@ export interface JobStore {
   /** Returns the jobId for the user's active lock, or null if not locked. */
   getActiveJobId(userId: number): Promise<string | null>;
   unlock(userId: number): Promise<void>;
+  /**
+   * Atomic exactly-once delivery claim. Returns true if THIS caller won the
+   * race to deliver the result for `jobId` (and should call deliverResult);
+   * false if someone else already claimed it. Implemented as a conditional
+   * write on the JOB# row — `SET delivered=true IF attribute_not_exists`.
+   */
+  markDelivered(jobId: string): Promise<boolean>;
 }
 
 /** In-memory job store for the local dev runner. */
@@ -78,6 +85,7 @@ export class MemoryJobStore implements JobStore {
   private readonly jobs = new Map<string, JobMapping>();
   // Map userId → jobId (undefined = locked but job not started yet)
   private readonly locks = new Map<number, string | undefined>();
+  private readonly delivered = new Set<string>();
 
   async put(mapping: JobMapping): Promise<void> {
     this.jobs.set(mapping.jobId, mapping);
@@ -87,6 +95,7 @@ export class MemoryJobStore implements JobStore {
   }
   async delete(jobId: string): Promise<void> {
     this.jobs.delete(jobId);
+    this.delivered.delete(jobId);
   }
   async tryLock(userId: number): Promise<boolean> {
     if (this.locks.has(userId)) return false;
@@ -104,5 +113,10 @@ export class MemoryJobStore implements JobStore {
   }
   async unlock(userId: number): Promise<void> {
     this.locks.delete(userId);
+  }
+  async markDelivered(jobId: string): Promise<boolean> {
+    if (this.delivered.has(jobId)) return false;
+    this.delivered.add(jobId);
+    return true;
   }
 }

@@ -101,6 +101,15 @@ export async function handler(
     };
   }
 
+  // Race the poller (Lambda A self-invoke) to claim delivery. Whoever calls
+  // markDelivered first wins; the loser exits without re-sending. This is
+  // what kills duplicate "Your clip is ready!" messages.
+  const won = await store.markDelivered(payload.jobId);
+  if (!won) {
+    console.info("[vms-webhook] poller already delivered", payload.jobId);
+    return { statusCode: 200, body: "ok" };
+  }
+
   try {
     await deliverResult(telegram, mapping.chatId, mapping.feature, job, {
       ...(mapping.statusMessageId !== undefined
@@ -114,9 +123,9 @@ export async function handler(
     await recordJobFinish({
       id: payload.jobId,
       status: payload.status,
-      resultUrl: (payload.result?.["url"] ??
-        payload.result?.["downloadUrl"] ??
-        payload.result?.["fileUrl"]) as string | undefined,
+      resultUrl: (job.result?.["url"] ??
+        job.result?.["downloadUrl"] ??
+        job.result?.["fileUrl"]) as string | undefined,
       ...(payload.message ? { errorMessage: payload.message } : {}),
     }).catch(() => {});
     await store.delete(payload.jobId);
