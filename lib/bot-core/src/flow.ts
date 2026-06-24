@@ -109,7 +109,7 @@ export function startFeature(feature: Feature): FlowAction {
 const INVALID_URL_MSG = `❌ Please send a valid YouTube URL:\n${URL_HINT}`;
 const INVALID_TIME_MSG = (eg1: string, eg2: string, eg3: string) =>
   `❌ <b>Invalid time</b>\n\nAccepted formats:\n• MM:SS → <code>${eg1}</code>\n• Seconds → <code>${eg2}</code>\n• HH:MM:SS → <code>${eg3}</code>`;
-const MAX_CLIP_DURATION_S = 3600; // VMS hard limit: 60 min
+const MAX_CLIP_DURATION_S = 780; // VMS limit: 13 min
 
 /** Pure: given current session + incoming text, return the next action. */
 export function handleText(session: SessionState, text: string): FlowAction {
@@ -144,7 +144,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
           if (end - start > MAX_CLIP_DURATION_S) {
             return keep(
               session,
-              `❌ Clip too long — VMS supports up to <b>60 minutes</b>.\n\nSend all three values again with a shorter range:`,
+              `❌ Clip too long — maximum is <b>13 minutes</b>.\n\nSend all three values again with a shorter range:`,
               "cancel",
             );
           }
@@ -205,7 +205,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
       if (end - start > MAX_CLIP_DURATION_S) {
         return keep(
           session,
-          `❌ Clip too long — VMS supports up to <b>60 minutes</b>.\n\nStart: <code>${fmtTime(start)}</code>. Send a closer end time:`,
+          `❌ Clip too long — maximum is <b>13 minutes</b>.\n\nStart: <code>${fmtTime(start)}</code>. Send a closer end time:`,
           "cancel",
         );
       }

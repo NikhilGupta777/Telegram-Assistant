@@ -64,13 +64,13 @@ describe("clip cut 3-step wizard", () => {
     expect(a.session?.step).toBe("cut_end"); // stays to retry
   });
 
-  it("rejects clips longer than 60 minutes", () => {
+  it("rejects clips longer than 13 minutes", () => {
     let s = startFeature("cut").session!;
     s = handleText(s, "https://youtu.be/abc").session!;
     s = handleText(s, "0:00").session!;
-    const a = handleText(s, "1:30:01"); // 5401 s > 3600
+    const a = handleText(s, "13:01"); // 781 s > 780
     expect(a.startJob).toBeUndefined();
-    expect(a.replies[0]!.text).toContain("60 minutes");
+    expect(a.replies[0]!.text).toContain("13 minutes");
     expect(a.session?.step).toBe("cut_end");
   });
 
@@ -103,11 +103,11 @@ describe("clip cut single-line shortcut", () => {
     expect(a.session?.step).toBe("cut_url");
   });
 
-  it("shortcut: rejects clips longer than 60 minutes", () => {
+  it("shortcut: rejects clips longer than 13 minutes", () => {
     const s = startFeature("cut").session!;
-    const a = handleText(s, "https://youtu.be/abc 0:00 1:30:01");
+    const a = handleText(s, "https://youtu.be/abc 0:00 13:01");
     expect(a.startJob).toBeUndefined();
-    expect(a.replies[0]!.text).toContain("60 minutes");
+    expect(a.replies[0]!.text).toContain("13 minutes");
     expect(a.session?.step).toBe("cut_url");
   });
 
