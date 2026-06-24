@@ -132,6 +132,14 @@ export interface FormattedResult {
   messages: string[];
   /** If present, send as a document instead of/in addition to text. */
   document?: { content: string; filename: string; caption: string };
+  /**
+   * Direct media URL the deliver layer should try to send as video/audio
+   * before falling back to a text link. Cut + download results expose
+   * this so users get inline playback when Telegram can fetch the file.
+   */
+  media?: { url: string; kind: "video" | "audio"; filename?: string };
+  /** True when the underlying job failed — deliver layer attaches retryKb. */
+  failed?: boolean;
 }
 
 function pickUrl(result: Record<string, unknown>): string | undefined {
@@ -140,15 +148,71 @@ function pickUrl(result: Record<string, unknown>): string | undefined {
     result["fileUrl"]) as string | undefined;
 }
 
+function pickFilename(result: Record<string, unknown>, fallback: string): string {
+  const v = (result["filename"] ?? result["fileName"] ?? result["name"]) as
+    | string
+    | undefined;
+  return v && v.trim() ? v : fallback;
+}
+
+/**
+ * Build a short " · 1:23 · 4.5 MB" suffix for the success headline using
+ * whatever optional metadata VMS happens to include. Silent when nothing
+ * useful is present — never invents numbers.
+ */
+function describeMedia(result: Record<string, unknown>): string {
+  const bits: string[] = [];
+  const duration = pickNumber(result, [
+    "duration",
+    "durationSecs",
+    "durationSec",
+    "lengthSec",
+  ]);
+  if (duration && duration > 0) bits.push(fmtTime(duration));
+  const size = pickNumber(result, [
+    "size",
+    "bytes",
+    "filesize",
+    "fileSize",
+    "contentLength",
+  ]);
+  if (size && size > 0) bits.push(humanSize(size));
+  return bits.length ? `  ·  ${bits.join("  ·  ")}` : "";
+}
+
+function pickNumber(
+  result: Record<string, unknown>,
+  keys: string[],
+): number | undefined {
+  for (const k of keys) {
+    const v = result[k];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return undefined;
+}
+
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 export function formatResult(
   job: JobEnvelope,
   feature: Feature,
 ): FormattedResult {
   if (!isSucceeded(job)) {
-    const msg = job.message ?? "Something went wrong. Please try again.";
+    const fallback = job.message ?? "Something went wrong. Please try again.";
+    const friendly = friendlyError(job.errorCode, fallback);
     return {
+      failed: true,
       messages: [
-        `❌ <b>Job failed</b>\n\n${esc(msg)}\n\n<i>Please try again with a different URL.</i>`,
+        `❌ <b>Job failed</b>\n\n${esc(friendly)}\n\n<i>Tap 🔄 Try Again below to retry.</i>`,
       ],
     };
   }
@@ -192,10 +256,13 @@ export function formatResult(
     case "cut": {
       const url = pickUrl(result);
       if (url) {
+        const meta = describeMedia(result);
+        const filename = pickFilename(result, "clip.mp4");
         return {
           messages: [
-            `✂️ <b>Your clip is ready!</b>\n\n<a href="${esc(url)}">⬇️ Download Clip</a>`,
+            `✂️ <b>Your clip is ready!</b>${meta}\n\n<a href="${esc(url)}">⬇️ Download (${esc(filename)})</a>`,
           ],
+          media: { url, kind: "video", filename },
         };
       }
       return rawFallback("✂️", result);
@@ -204,10 +271,15 @@ export function formatResult(
     case "download": {
       const url = pickUrl(result);
       if (url) {
+        const meta = describeMedia(result);
+        const audioOnly = Boolean(result["audioOnly"]);
+        const defaultName = audioOnly ? "audio.mp3" : "video.mp4";
+        const filename = pickFilename(result, defaultName);
         return {
           messages: [
-            `⬇️ <b>Download ready!</b>\n\n<a href="${esc(url)}">⬇️ Click to download</a>`,
+            `⬇️ <b>Download ready!</b>${meta}\n\n<a href="${esc(url)}">⬇️ Download (${esc(filename)})</a>`,
           ],
+          media: { url, kind: audioOnly ? "audio" : "video", filename },
         };
       }
       return rawFallback("⬇️", result);

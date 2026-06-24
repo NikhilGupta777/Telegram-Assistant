@@ -66,13 +66,18 @@ export async function handler(
     return { statusCode: 200, body: "ok" };
   }
 
+  // VMS sends the error code under any of these — normalise to one field.
+  const errorCode = payload.errorCode ?? payload.error?.code ?? payload.code;
+  const errorMessage = payload.message ?? payload.error?.message;
+
   const job: JobEnvelope = {
     jobId: payload.jobId,
     status: payload.status,
     ...(payload.succeeded !== undefined ? { succeeded: payload.succeeded } : {}),
     ...(payload.failed !== undefined ? { failed: payload.failed } : {}),
     ...(payload.result ? { result: payload.result } : {}),
-    ...(payload.message ? { message: payload.message } : {}),
+    ...(errorMessage ? { message: errorMessage } : {}),
+    ...(errorCode ? { errorCode } : {}),
     terminal: true,
   };
 

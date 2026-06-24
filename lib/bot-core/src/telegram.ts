@@ -1,8 +1,5 @@
 import { Telegraf, Markup } from "telegraf";
 import type { Context } from "telegraf";
-import type { InlineKeyboardMarkup } from "telegraf/types";
-
-type InlineKb = Markup.Markup<InlineKeyboardMarkup>;
 import {
   handleText,
   handleDownloadChoice,
@@ -21,28 +18,9 @@ import {
 } from "./vms.js";
 import type { SessionStore, JobStore, JobMapping } from "./store.js";
 import { WELCOME, HELP } from "./text.js";
+import { MAIN_MENU, retryKb } from "./keyboards.js";
 
 // ─── Keyboards ───────────────────────────────────────────────────────────────
-
-export const MAIN_MENU: InlineKb = Markup.inlineKeyboard([
-  [
-    Markup.button.callback("🎬 Best Clips", "feat:clips"),
-    Markup.button.callback("✂️ Clip Cut", "feat:cut"),
-  ],
-  [
-    Markup.button.callback("📝 Subtitles", "feat:subtitles"),
-    Markup.button.callback("⏱ Timestamps", "feat:timestamps"),
-  ],
-  [Markup.button.callback("⬇️ Download", "feat:download")],
-  [
-    Markup.button.callback("📖 Bhagwat AI 🔒", "soon"),
-    Markup.button.callback("🖼 Thumbnail 🔒", "soon"),
-  ],
-  [
-    Markup.button.callback("🤖 AI Copilot 🔒", "soon"),
-    Markup.button.callback("☁️ Uploads 🔒", "soon"),
-  ],
-]);
 
 const CANCEL_KB = Markup.inlineKeyboard([
   [Markup.button.callback("❌ Cancel", "cancel")],
@@ -56,12 +34,7 @@ const DOWNLOAD_TYPE_KB = Markup.inlineKeyboard([
   [Markup.button.callback("❌ Cancel", "cancel")],
 ]);
 
-export function retryKb(feat: Feature): InlineKb {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("🔄 Try Again", `feat:${feat}`)],
-    [Markup.button.callback("🏠 Main Menu", "menu")],
-  ]);
-}
+export { MAIN_MENU, retryKb };
 
 function kb(keyboard: Keyboard | undefined) {
   switch (keyboard) {
@@ -281,13 +254,6 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     await ctx.answerCbQuery("Cancelled ✅");
     await cancelUserJob(ctx.from!.id);
     await ctx.reply("✅ Cancelled.", MAIN_MENU);
-  });
-
-  bot.action("soon", async (ctx) => {
-    await ctx.answerCbQuery(
-      "🔒 Coming soon! Stay tuned for updates.",
-      { show_alert: true },
-    );
   });
 
   // ── Feature buttons ──

@@ -37,6 +37,8 @@ export interface JobEnvelope {
   result?: Record<string, unknown>;
   message?: string;
   progress?: number;
+  /** VMS error code (e.g. RATE_LIMIT_EXCEEDED). Mapped to friendly copy. */
+  errorCode?: string;
 }
 
 /** Shape of the body VMS POSTs to our webhookUrl on completion. */
@@ -47,6 +49,14 @@ export interface VmsWebhookPayload {
   failed?: boolean;
   result?: Record<string, unknown>;
   message?: string;
+  /**
+   * Optional error code on failure. VMS may send it under any of `errorCode`,
+   * `error.code`, or `code` — Lambda B normalises before constructing the
+   * JobEnvelope. Friendly mapping lives in `format.ts`'s `friendlyError`.
+   */
+  errorCode?: string;
+  error?: { code?: string; message?: string };
+  code?: string;
   timestamp?: number;
 }
 

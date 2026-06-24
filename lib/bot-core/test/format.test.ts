@@ -139,6 +139,42 @@ describe("formatResult", () => {
     );
     expect(r.messages[0]).toContain("Job failed");
     expect(r.messages[0]).toContain("boom");
+    expect(r.failed).toBe(true);
+  });
+
+  it("applies friendlyError when errorCode is present", () => {
+    const r = formatResult(
+      {
+        jobId: "j",
+        status: "error",
+        failed: true,
+        errorCode: "RATE_LIMIT_EXCEEDED",
+        message: "raw upstream blob",
+      },
+      "cut",
+    );
+    expect(r.messages[0]).toContain("fast");
+    expect(r.messages[0]).not.toContain("raw upstream blob");
+    expect(r.failed).toBe(true);
+  });
+
+  it("exposes media URL for cut so the deliver layer can sendVideo", () => {
+    const r = formatResult(
+      { ...base, result: { url: "https://cdn/clip.mp4", duration: 75, size: 4_500_000 } },
+      "cut",
+    );
+    expect(r.media?.url).toBe("https://cdn/clip.mp4");
+    expect(r.media?.kind).toBe("video");
+    expect(r.messages[0]).toContain("1:15");
+    expect(r.messages[0]).toContain("MB");
+  });
+
+  it("marks audio download as audio media", () => {
+    const r = formatResult(
+      { ...base, result: { url: "https://cdn/a.mp3", audioOnly: true } },
+      "download",
+    );
+    expect(r.media?.kind).toBe("audio");
   });
 
   it("formats clips", () => {

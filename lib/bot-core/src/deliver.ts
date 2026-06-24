@@ -1,23 +1,19 @@
 import type { Telegram } from "telegraf";
-import { Markup } from "telegraf";
 import { formatResult, type Feature } from "./format.js";
 import type { JobEnvelope } from "./vms.js";
-
-const MAIN_MENU = Markup.inlineKeyboard([
-  [
-    Markup.button.callback("🎬 Best Clips", "feat:clips"),
-    Markup.button.callback("✂️ Clip Cut", "feat:cut"),
-  ],
-  [
-    Markup.button.callback("📝 Subtitles", "feat:subtitles"),
-    Markup.button.callback("⏱ Timestamps", "feat:timestamps"),
-  ],
-  [Markup.button.callback("⬇️ Download", "feat:download")],
-]);
+import { MAIN_MENU, retryKb } from "./keyboards.js";
 
 /**
  * Deliver a finished VMS job to a Telegram chat. Host-agnostic: works from
  * Lambda B (webhook) and from the local runner (after polling).
+ *
+ * Behaviour, by branch:
+ *  - Failure → red error message + retryKb(feature) for one-tap retry.
+ *  - Subtitles (document) → sendDocument with MAIN_MENU.
+ *  - Cut / Download (media URL) → try sendVideo/sendAudio so it plays inline;
+ *    if Telegram can't fetch the URL (size, codec, etc.), fall back to the
+ *    plain link message.
+ *  - Text result (clips, timestamps, transcript, errors) → sendMessage(s).
  */
 export async function deliverResult(
   telegram: Telegram,
@@ -35,23 +31,60 @@ export async function deliverResult(
     }
   }
 
-  const { messages, document } = formatResult(job, feature);
+  const formatted = formatResult(job, feature);
+  const trailingKb = formatted.failed ? retryKb(feature) : MAIN_MENU;
 
-  if (document) {
+  // ── Documents (subtitles .srt / transcript .txt) ──
+  if (formatted.document) {
     await telegram.sendDocument(
       chatId,
-      { source: Buffer.from(document.content, "utf-8"), filename: document.filename },
-      { caption: document.caption, parse_mode: "HTML", ...MAIN_MENU },
+      {
+        source: Buffer.from(formatted.document.content, "utf-8"),
+        filename: formatted.document.filename,
+      },
+      {
+        caption: formatted.document.caption,
+        parse_mode: "HTML",
+        ...trailingKb,
+      },
     );
     return;
   }
 
-  for (let i = 0; i < messages.length; i++) {
-    const isLast = i === messages.length - 1;
-    await telegram.sendMessage(chatId, messages[i]!, {
+  // ── Inline media (cut / download) ──
+  // Telegram will fetch the URL itself and re-host the file so users can
+  // tap-to-play. If it fails (URL not fetchable, file too large for Telegram
+  // to ingest, codec mismatch, etc.), we silently fall through to the
+  // text-link message below so the user always gets something usable.
+  if (formatted.media && formatted.messages[0]) {
+    const caption = formatted.messages[0];
+    try {
+      if (formatted.media.kind === "video") {
+        await telegram.sendVideo(chatId, formatted.media.url, {
+          caption,
+          parse_mode: "HTML",
+          ...trailingKb,
+        });
+      } else {
+        await telegram.sendAudio(chatId, formatted.media.url, {
+          caption,
+          parse_mode: "HTML",
+          ...trailingKb,
+        });
+      }
+      return;
+    } catch {
+      /* fall through to plain link delivery */
+    }
+  }
+
+  // ── Plain text messages (one or many chunks) ──
+  for (let i = 0; i < formatted.messages.length; i++) {
+    const isLast = i === formatted.messages.length - 1;
+    await telegram.sendMessage(chatId, formatted.messages[i]!, {
       parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
-      ...(isLast ? MAIN_MENU : {}),
+      ...(isLast ? trailingKb : {}),
     });
   }
 }
