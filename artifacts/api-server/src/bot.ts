@@ -61,7 +61,7 @@ export const bot = createBot(token, {
         job.feature,
         job.endpoint,
         job.payload,
-        { chatId, userId, statusMessageId },
+        { chatId, userId, statusMessageId, username: ctx.from?.username ?? ctx.from?.first_name },
         jobs,
         { idempotencyKey: `${userId}:${Date.now()}` },
       );

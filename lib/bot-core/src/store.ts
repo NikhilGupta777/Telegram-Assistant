@@ -54,6 +54,8 @@ export interface JobMapping {
   jobId: string;
   chatId: number;
   userId: number;
+  username?: string;
+  payload?: Record<string, unknown>;
   feature: Feature;
   /** message_id of the "working…" status message, to edit/delete later. */
   statusMessageId?: number;

@@ -115,6 +115,8 @@ export async function handler(
       ...(mapping.statusMessageId !== undefined
         ? { statusMessageId: mapping.statusMessageId }
         : {}),
+      ...(mapping.username ? { username: mapping.username } : {}),
+      ...(mapping.payload ? { payload: mapping.payload } : {}),
     });
   } catch (err) {
     console.error("Failed to deliver result", err);

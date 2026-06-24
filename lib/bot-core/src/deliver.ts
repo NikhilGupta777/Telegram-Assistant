@@ -47,7 +47,7 @@ export async function deliverResult(
   chatId: number,
   feature: Feature,
   job: JobEnvelope,
-  opts: { statusMessageId?: number } = {},
+  opts: { statusMessageId?: number; username?: string; payload?: Record<string, unknown> } = {},
 ): Promise<void> {
   // Remove the "working…" placeholder if we have one.
   if (opts.statusMessageId !== undefined) {
@@ -73,7 +73,31 @@ export async function deliverResult(
   }
 
   const formatted = formatResult(job, feature);
-  const trailingKb = formatted.failed ? retryKb(feature) : MAIN_MENU;
+  const trailingKb = formatted.failed ? retryKb(feature) : {};
+
+  // Attach context string to the very first message caption/text if available
+  if (opts.username && formatted.messages.length > 0) {
+    let contextStr = `\n\n👤 Requested by: @${opts.username}`;
+    if (opts.payload) {
+      const url = opts.payload["url"] as string | undefined;
+      const start = opts.payload["startTime"] as number | undefined;
+      const end = opts.payload["endTime"] as number | undefined;
+      if (url) {
+        contextStr += `\n🔗 Link: <code>${url}</code>`;
+      }
+      if (start !== undefined && end !== undefined) {
+        // Quick local format for time
+        const fmt = (s: number) => {
+          const m = Math.floor(s / 60);
+          const sc = s % 60;
+          return m > 0 ? `${m}:${String(sc).padStart(2, "0")}` : `${sc}s`;
+        };
+        contextStr += `\n⏱ Time: ${fmt(start)} - ${fmt(end)}`;
+      }
+    }
+    // Append to the first message
+    formatted.messages[0] += contextStr;
+  }
 
   // ── Documents (subtitles .srt / transcript .txt) ──
   if (formatted.document) {
@@ -84,7 +108,7 @@ export async function deliverResult(
         filename: formatted.document.filename,
       },
       {
-        caption: formatted.document.caption,
+        caption: (formatted.document.caption || "") + (opts.username && formatted.messages.length === 0 ? `\n\n👤 Requested by: @${opts.username}` : ""),
         parse_mode: "HTML",
         ...trailingKb,
       },
@@ -93,10 +117,6 @@ export async function deliverResult(
   }
 
   // ── Inline media (cut / download) ──
-  // Telegram will fetch the URL itself and re-host the file so users can
-  // tap-to-play. If it fails (URL not fetchable, file too large for Telegram
-  // to ingest, codec mismatch, etc.), we silently fall through to the
-  // text-link message below so the user always gets something usable.
   if (formatted.media && formatted.messages[0]) {
     const caption = formatted.messages[0];
     try {

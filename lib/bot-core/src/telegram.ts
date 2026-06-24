@@ -368,7 +368,7 @@ export async function startJobForChat(
   feature: Feature,
   endpoint: string,
   payload: Record<string, unknown>,
-  ctx: { chatId: number; userId: number; statusMessageId?: number },
+  ctx: { chatId: number; userId: number; statusMessageId?: number; username?: string },
   jobs: JobStore,
   opts: StartJobOptions,
 ): Promise<JobEnvelope> {
@@ -377,6 +377,8 @@ export async function startJobForChat(
     jobId: job.jobId,
     chatId: ctx.chatId,
     userId: ctx.userId,
+    username: ctx.username,
+    payload,
     feature,
     ...(ctx.statusMessageId !== undefined
       ? { statusMessageId: ctx.statusMessageId }
