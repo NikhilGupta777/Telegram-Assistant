@@ -15,6 +15,7 @@ import type { Feature } from "./format.js";
 import { chunkMessage, esc } from "./format.js";
 import {
   startJob,
+  cancelJob,
   type JobEnvelope,
   type StartJobOptions,
 } from "./vms.js";
@@ -75,6 +76,14 @@ function kb(keyboard: Keyboard | undefined) {
   }
 }
 
+const FEATURE_EMOJI: Record<string, string> = {
+  clips: "🎬",
+  cut: "✂️",
+  subtitles: "📝",
+  timestamps: "⏱",
+  download: "⬇️",
+};
+
 // ─── Bot factory ─────────────────────────────────────────────────────────────
 
 export interface BotDeps {
@@ -109,21 +118,85 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   const bot = new Telegraf(token);
   const { sessions } = deps;
 
-  async function runAction(ctx: Context, userId: number, action: FlowAction) {
+  /**
+   * Execute a flow action:
+   *  - Persist the new session state.
+   *  - Edit the previous bot message in-place when stepping through a multi-step
+   *    flow, falling back to a new reply if the edit fails.
+   *  - Delete the stale step prompt when the session is being cleared (job start).
+   *  - Store botMessageId in the session so the next step can edit it.
+   */
+  async function runAction(
+    ctx: Context,
+    userId: number,
+    action: FlowAction,
+    currentSession?: SessionState,
+  ) {
+    const chatId = ctx.chat!.id;
+    const prevBotMsgId = currentSession?.botMessageId;
+
+    // Persist session first so the message_id patch below lands on a live record.
     if (action.session === null) {
       await sessions.clear(userId);
     } else if (action.session) {
-      // Replace whole session deterministically.
       await sessions.clear(userId);
       await sessions.set(userId, action.session);
     }
+
+    // When a job is starting (session cleared), remove the stale step prompt
+    // so the chat stays clean. The fresh confirmation reply takes its place.
+    if (action.session === null && prevBotMsgId) {
+      try {
+        await ctx.telegram.deleteMessage(chatId, prevBotMsgId);
+      } catch {
+        // Message may already be gone — harmless.
+      }
+    }
+
     for (const r of action.replies) {
       const markup = kb(r.keyboard);
-      await ctx.reply(r.text, { parse_mode: "HTML", ...(markup ?? {}) });
+      const extra = { parse_mode: "HTML" as const, ...(markup ?? {}) };
+
+      // Try to edit the previous prompt when we're mid-flow (not clearing session).
+      const canEdit = prevBotMsgId != null && action.session !== null && action.session?.step;
+      if (canEdit) {
+        try {
+          await ctx.telegram.editMessageText(chatId, prevBotMsgId, undefined, r.text, extra);
+          // Keep the same message ID for the next step.
+          if (action.session?.step) {
+            await sessions.set(userId, { botMessageId: prevBotMsgId });
+          }
+          continue;
+        } catch {
+          // Edit failed (message too old, identical content, etc.) — fall through.
+        }
+      }
+
+      const msg = await ctx.reply(r.text, extra);
+      // Persist the new message ID so the next step can edit it.
+      if (action.session?.step) {
+        await sessions.set(userId, { botMessageId: msg.message_id });
+      }
     }
+
     if (action.startJob) {
       await deps.onStartJob(ctx, action.startJob);
     }
+  }
+
+  /**
+   * Cancel any in-flight VMS job for this user, clean up the lock, and clear
+   * the session. Safe to call even when no job is running.
+   */
+  async function cancelUserJob(userId: number): Promise<void> {
+    const activeJobId = await deps.jobs.getActiveJobId(userId);
+    if (activeJobId) {
+      // Best-effort: VMS may not support cancellation for all endpoints.
+      void cancelJob(activeJobId).catch(() => {});
+      await deps.jobs.delete(activeJobId).catch(() => {});
+      await deps.jobs.unlock(userId);
+    }
+    await sessions.clear(userId);
   }
 
   // Track every interacting user FIRST (best-effort, non-blocking), so it runs
@@ -145,7 +218,7 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
 
   // ── Commands ──
   bot.start(async (ctx) => {
-    await sessions.clear(ctx.from.id);
+    await cancelUserJob(ctx.from.id);
     await ctx.reply(WELCOME, { parse_mode: "HTML", ...MAIN_MENU });
   });
 
@@ -154,7 +227,7 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   });
 
   bot.command("cancel", async (ctx) => {
-    await sessions.clear(ctx.from.id);
+    await cancelUserJob(ctx.from.id);
     await ctx.reply("✅ Cancelled.", MAIN_MENU);
   });
 
@@ -174,13 +247,6 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
       );
       return;
     }
-    const icon: Record<string, string> = {
-      clips: "🎬",
-      cut: "✂️",
-      subtitles: "📝",
-      timestamps: "⏱",
-      download: "⬇️",
-    };
     const statusIcon: Record<string, string> = {
       done: "✅",
       error: "❌",
@@ -195,7 +261,7 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
       const link = r.resultUrl
         ? ` — <a href="${esc(r.resultUrl)}">link</a>`
         : "";
-      return `${icon[r.feature] ?? "•"} <b>${r.feature}</b> ${statusIcon[r.status] ?? ""} <i>${when}</i>${link}`;
+      return `${FEATURE_EMOJI[r.feature] ?? "•"} <b>${r.feature}</b> ${statusIcon[r.status] ?? ""} <i>${when}</i>${link}`;
     });
     await ctx.reply(`🕘 <b>Your recent jobs</b>\n\n${lines.join("\n")}`, {
       parse_mode: "HTML",
@@ -207,24 +273,29 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   // ── Menu actions ──
   bot.action("menu", async (ctx) => {
     await ctx.answerCbQuery();
-    await sessions.clear(ctx.from!.id);
+    await cancelUserJob(ctx.from!.id);
     await ctx.reply(WELCOME, { parse_mode: "HTML", ...MAIN_MENU });
   });
 
   bot.action("cancel", async (ctx) => {
     await ctx.answerCbQuery("Cancelled ✅");
-    await sessions.clear(ctx.from!.id);
+    await cancelUserJob(ctx.from!.id);
     await ctx.reply("✅ Cancelled.", MAIN_MENU);
   });
 
   bot.action("soon", async (ctx) => {
-    await ctx.answerCbQuery("🔒 Coming soon! Stay tuned.", { show_alert: true });
+    await ctx.answerCbQuery(
+      "🔒 Coming soon! Stay tuned for updates.",
+      { show_alert: true },
+    );
   });
 
   // ── Feature buttons ──
   for (const feature of ["clips", "cut", "subtitles", "timestamps", "download"] as const) {
     bot.action(`feat:${feature}`, async (ctx) => {
       await ctx.answerCbQuery();
+      // Clear any stale session before starting fresh (no currentSession — fresh prompt).
+      await cancelUserJob(ctx.from!.id);
       await runAction(ctx, ctx.from!.id, startFeature(feature));
     });
   }
@@ -232,13 +303,15 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   // ── Download type buttons ──
   bot.action("dl:video", async (ctx) => {
     await ctx.answerCbQuery();
-    const session = await sessions.get(ctx.from!.id);
-    await runAction(ctx, ctx.from!.id, handleDownloadChoice(session, false));
+    const userId = ctx.from!.id;
+    const session = await sessions.get(userId);
+    await runAction(ctx, userId, handleDownloadChoice(session, false), session);
   });
   bot.action("dl:audio", async (ctx) => {
     await ctx.answerCbQuery();
-    const session = await sessions.get(ctx.from!.id);
-    await runAction(ctx, ctx.from!.id, handleDownloadChoice(session, true));
+    const userId = ctx.from!.id;
+    const session = await sessions.get(userId);
+    await runAction(ctx, userId, handleDownloadChoice(session, true), session);
   });
 
   // ── Text ──
@@ -247,8 +320,19 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     if (text.startsWith("/")) return; // commands handled above
     const userId = ctx.from.id;
     const session = await sessions.get(userId);
-    await runAction(ctx, userId, handleText(session, text));
+    await runAction(ctx, userId, handleText(session, text), session);
   });
+
+  // ── Non-text media (photos, voice, stickers, etc.) ──
+  bot.on(
+    ["photo", "document", "voice", "sticker", "video", "audio", "animation", "contact", "location"],
+    async (ctx) => {
+      await ctx.reply(
+        "👇 I only work with YouTube links — choose a feature and paste your link:",
+        { parse_mode: "HTML", ...MAIN_MENU },
+      );
+    },
+  );
 
   bot.catch((err) => {
     // Adapters wire their own logger; rethrow-safe no-op here.
@@ -283,5 +367,5 @@ export async function startJobForChat(
   return job;
 }
 
-export { chunkMessage };
+export { chunkMessage, FEATURE_EMOJI };
 export { deliverResult } from "./deliver.js";

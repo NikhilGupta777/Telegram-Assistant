@@ -72,10 +72,26 @@ export function fmtTime(seconds: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
+/** Accepts any http/https URL — used for generic validation. */
 export function isValidUrl(text: string): boolean {
   try {
     const u = new URL(text.trim());
     return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Accepts only YouTube URLs (youtube.com, youtu.be, m.youtube.com).
+ * Used by the flow to catch non-YouTube links before wasting an API call.
+ */
+export function isYouTubeUrl(text: string): boolean {
+  try {
+    const u = new URL(text.trim());
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const host = u.hostname.replace(/^(www\.|m\.)/, "");
+    return host === "youtube.com" || host === "youtu.be";
   } catch {
     return false;
   }
@@ -260,7 +276,9 @@ function rawFallback(
 ): FormattedResult {
   const json = JSON.stringify(result, null, 2);
   return {
-    messages: [`${emoji} <b>Done!</b>\n\n<pre>${esc(json.slice(0, 1500))}</pre>`],
+    messages: [
+      `${emoji} <b>Done!</b> Got a result, but couldn't format it nicely.\n\n<pre>${esc(json.slice(0, 1500))}</pre>`,
+    ],
   };
 }
 

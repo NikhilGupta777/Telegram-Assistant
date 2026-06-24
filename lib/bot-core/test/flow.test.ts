@@ -16,7 +16,7 @@ describe("startFeature", () => {
   });
 });
 
-describe("clip cut 3-step form", () => {
+describe("clip cut 3-step wizard", () => {
   it("walks url → start → end → startJob", () => {
     let s: SessionState = startFeature("cut").session!;
 
@@ -38,12 +38,20 @@ describe("clip cut 3-step form", () => {
     });
   });
 
-  it("rejects an invalid url at step 1", () => {
+  it("rejects a non-YouTube url at step 1", () => {
+    const s = startFeature("cut").session!;
+    const a = handleText(s, "https://vimeo.com/123");
+    expect(a.startJob).toBeUndefined();
+    expect(a.replies[0]!.text).toContain("valid YouTube URL");
+    expect(a.session?.step).toBe("cut_url"); // unchanged
+  });
+
+  it("rejects a plain non-url at step 1", () => {
     const s = startFeature("cut").session!;
     const a = handleText(s, "nope");
     expect(a.startJob).toBeUndefined();
     expect(a.replies[0]!.text).toContain("valid YouTube URL");
-    expect(a.session?.step).toBe("cut_url"); // unchanged
+    expect(a.session?.step).toBe("cut_url");
   });
 
   it("rejects end <= start", () => {
@@ -56,12 +64,60 @@ describe("clip cut 3-step form", () => {
     expect(a.session?.step).toBe("cut_end"); // stays to retry
   });
 
+  it("rejects clips longer than 60 minutes", () => {
+    let s = startFeature("cut").session!;
+    s = handleText(s, "https://youtu.be/abc").session!;
+    s = handleText(s, "0:00").session!;
+    const a = handleText(s, "1:30:01"); // 5401 s > 3600
+    expect(a.startJob).toBeUndefined();
+    expect(a.replies[0]!.text).toContain("60 minutes");
+    expect(a.session?.step).toBe("cut_end");
+  });
+
   it("rejects an unparseable time", () => {
     let s = startFeature("cut").session!;
     s = handleText(s, "https://youtu.be/abc").session!;
     const a = handleText(s, "abc");
     expect(a.session?.step).toBe("cut_start");
     expect(a.replies[0]!.text).toContain("Invalid time");
+  });
+});
+
+describe("clip cut single-line shortcut", () => {
+  it("accepts url start end in one message and fires the job", () => {
+    const s = startFeature("cut").session!;
+    const a = handleText(s, "https://youtu.be/abc 1:00 2:30");
+    expect(a.session).toBeNull();
+    expect(a.startJob).toEqual({
+      feature: "cut",
+      endpoint: "clip-cut",
+      payload: { url: "https://youtu.be/abc", startTime: 60, endTime: 150 },
+    });
+  });
+
+  it("shortcut: rejects end <= start", () => {
+    const s = startFeature("cut").session!;
+    const a = handleText(s, "https://youtu.be/abc 2:00 1:00");
+    expect(a.startJob).toBeUndefined();
+    expect(a.replies[0]!.text).toContain("after");
+    expect(a.session?.step).toBe("cut_url");
+  });
+
+  it("shortcut: rejects clips longer than 60 minutes", () => {
+    const s = startFeature("cut").session!;
+    const a = handleText(s, "https://youtu.be/abc 0:00 1:30:01");
+    expect(a.startJob).toBeUndefined();
+    expect(a.replies[0]!.text).toContain("60 minutes");
+    expect(a.session?.step).toBe("cut_url");
+  });
+
+  it("shortcut: falls through to wizard when third token is not a valid time", () => {
+    const s = startFeature("cut").session!;
+    // Second token is valid, third is not — treat as URL-only (fall to wizard)
+    const a = handleText(s, "https://youtu.be/abc 1:00 notaTime");
+    // Should move to cut_start step (wizard path)
+    expect(a.session?.step).toBe("cut_start");
+    expect(a.startJob).toBeUndefined();
   });
 });
 
@@ -85,6 +141,16 @@ describe("download flow", () => {
     });
   });
 
+  it("download confirmation includes URL and type", () => {
+    let s = startFeature("download").session!;
+    s = handleText(s, "https://youtu.be/abc").session!;
+    const video = handleDownloadChoice(s, false);
+    expect(video.replies[0]!.text).toContain("https://youtu.be/abc");
+    expect(video.replies[0]!.text).toContain("Video");
+    const audio = handleDownloadChoice(s, true);
+    expect(audio.replies[0]!.text).toContain("Audio");
+  });
+
   it("nudges the user to tap a button while on download_type", () => {
     let s = startFeature("download").session!;
     s = handleText(s, "https://youtu.be/abc").session!;
@@ -98,6 +164,13 @@ describe("download flow", () => {
     expect(a.startJob).toBeUndefined();
     expect(a.replies[0]!.text).toContain("Session expired");
     expect(a.session).toBeNull();
+  });
+
+  it("rejects non-YouTube URL at download_url step", () => {
+    const s = startFeature("download").session!;
+    const a = handleText(s, "https://vimeo.com/123");
+    expect(a.startJob).toBeUndefined();
+    expect(a.replies[0]!.text).toContain("valid YouTube URL");
   });
 });
 
@@ -118,13 +191,42 @@ describe("single-step features", () => {
     expect(a.startJob?.payload).toMatchObject({ durations: [15, 45] });
   });
 
-  it("subtitles: starts with language auto", () => {
+  it("clips: rejects non-YouTube URL", () => {
+    const s = startFeature("clips").session!;
+    const a = handleText(s, "https://vimeo.com/123");
+    expect(a.startJob).toBeUndefined();
+    expect(a.replies[0]!.text).toContain("valid YouTube URL");
+  });
+
+  it("subtitles: starts with language auto by default", () => {
     const s = startFeature("subtitles").session!;
     const a = handleText(s, "https://youtu.be/abc");
     expect(a.startJob?.payload).toEqual({
       url: "https://youtu.be/abc",
       language: "auto",
     });
+  });
+
+  it("subtitles: respects inline language code", () => {
+    const s = startFeature("subtitles").session!;
+    const a = handleText(s, "https://youtu.be/abc hi");
+    expect(a.startJob?.payload).toEqual({
+      url: "https://youtu.be/abc",
+      language: "hi",
+    });
+  });
+
+  it("subtitles: language code is lowercased", () => {
+    const s = startFeature("subtitles").session!;
+    const a = handleText(s, "https://youtu.be/abc EN");
+    expect(a.startJob?.payload).toMatchObject({ language: "en" });
+  });
+
+  it("subtitles: rejects non-YouTube URL", () => {
+    const s = startFeature("subtitles").session!;
+    const a = handleText(s, "not-a-url");
+    expect(a.startJob).toBeUndefined();
+    expect(a.replies[0]!.text).toContain("valid YouTube URL");
   });
 
   it("timestamps: captures trailing instructions", () => {
@@ -134,6 +236,19 @@ describe("single-step features", () => {
       url: "https://youtu.be/abc",
       instructions: "Make 10 chapters",
     });
+  });
+
+  it("timestamps: works without trailing instructions", () => {
+    const s = startFeature("timestamps").session!;
+    const a = handleText(s, "https://youtu.be/abc");
+    expect(a.startJob?.payload).toEqual({ url: "https://youtu.be/abc" });
+  });
+
+  it("timestamps: rejects non-YouTube URL", () => {
+    const s = startFeature("timestamps").session!;
+    const a = handleText(s, "https://example.com/video");
+    expect(a.startJob).toBeUndefined();
+    expect(a.replies[0]!.text).toContain("valid YouTube URL");
   });
 });
 

@@ -4,6 +4,7 @@ import {
   deliverResult,
   startJobForChat,
   retryKb,
+  FEATURE_EMOJI,
 } from "@workspace/bot-core/telegram";
 import {
   MemorySessionStore,
@@ -38,8 +39,16 @@ export const bot = createBot(token, {
     const chatId = ctx.chat!.id;
 
     if (!(await jobs.tryLock(userId))) {
+      const activeJobId = await jobs.getActiveJobId(userId);
+      let featureHint = "";
+      if (activeJobId) {
+        const mapping = await jobs.getJob(activeJobId);
+        if (mapping) {
+          featureHint = ` (${FEATURE_EMOJI[mapping.feature] ?? ""} ${mapping.feature})`;
+        }
+      }
       await ctx.reply(
-        "⏳ You already have a job running. Please wait for it to finish.",
+        `⏳ You already have a job running${featureHint}. Please wait, or press /cancel to stop it.`,
         { parse_mode: "HTML" },
       );
       return;
@@ -60,6 +69,9 @@ export const bot = createBot(token, {
         jobs,
         { idempotencyKey: `${userId}:${Date.now()}` },
       );
+      // Record which job belongs to the lock so /cancel can stop it.
+      await jobs.setLockJob(userId, started.jobId);
+
       await recordJobStart({
         id: started.jobId,
         userId,
@@ -105,10 +117,11 @@ export const bot = createBot(token, {
           /* ok */
         }
       }
+      const emoji = FEATURE_EMOJI[job.feature] ?? "";
       const friendly =
         err instanceof VmsError
           ? friendlyError(err.code, err.message)
-          : `❌ <b>Something went wrong</b>\n\n${
+          : `${emoji} <b>Something went wrong</b>\n\n${
               err instanceof Error ? err.message.slice(0, 400) : "Please try again."
             }`;
       await ctx.reply(friendly, { parse_mode: "HTML", ...retryKb(job.feature) });

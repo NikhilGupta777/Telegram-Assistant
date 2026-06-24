@@ -2,7 +2,12 @@ import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyResultV2,
 } from "aws-lambda";
-import { createBot, retryKb, startJobForChat } from "@workspace/bot-core/telegram";
+import {
+  createBot,
+  retryKb,
+  startJobForChat,
+  FEATURE_EMOJI,
+} from "@workspace/bot-core/telegram";
 import { loadConfigFromSsm } from "@workspace/bot-core/config";
 import { DynamoStore } from "@workspace/bot-core/dynamo";
 import { VmsError, friendlyError } from "@workspace/bot-core";
@@ -35,8 +40,16 @@ async function getBot() {
         // Per-user concurrency guard.
         const locked = await store.tryLock(userId);
         if (!locked) {
+          const activeJobId = await store.getActiveJobId(userId);
+          let featureHint = "";
+          if (activeJobId) {
+            const mapping = await store.getJob(activeJobId);
+            if (mapping) {
+              featureHint = ` (${FEATURE_EMOJI[mapping.feature] ?? ""} ${mapping.feature})`;
+            }
+          }
           await ctx.reply(
-            "⏳ You already have a job running. Please wait for it to finish.",
+            `⏳ You already have a job running${featureHint}. Please wait, or press /cancel to stop it.`,
             { parse_mode: "HTML" },
           );
           return;
@@ -69,6 +82,10 @@ async function getBot() {
               idempotencyKey,
             },
           );
+
+          // Record the jobId in the lock so /cancel can terminate the VMS job.
+          await store.setLockJob(userId, started.jobId);
+
           await recordJobStart({
             id: started.jobId,
             userId,
@@ -77,10 +94,11 @@ async function getBot() {
           });
         } catch (err) {
           await store.unlock(userId);
+          const emoji = FEATURE_EMOJI[job.feature] ?? "";
           const friendly =
             err instanceof VmsError
               ? friendlyError(err.code, err.message)
-              : "❌ Failed to start job. Please try again.";
+              : `${emoji} <b>Failed to start job.</b> Please try again.`;
           await ctx.reply(friendly, {
             parse_mode: "HTML",
             ...retryKb(job.feature),

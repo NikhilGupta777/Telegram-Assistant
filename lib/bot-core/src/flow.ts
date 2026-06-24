@@ -1,4 +1,4 @@
-import { fmtTime, isValidUrl, parseSeconds, type Feature } from "./format.js";
+import { fmtTime, isYouTubeUrl, parseSeconds, esc, type Feature } from "./format.js";
 
 // ─── Session state ───────────────────────────────────────────────────────────
 
@@ -17,6 +17,8 @@ export interface SessionState {
   step?: Step;
   data?: Record<string, unknown>;
   expiresAt?: number;
+  /** message_id of the last bot prompt — used by the adapter for edit-in-place. */
+  botMessageId?: number;
 }
 
 export const SESSION_TTL = 30 * 60 * 1000;
@@ -54,7 +56,7 @@ export function startFeature(feature: Feature): FlowAction {
         session: { feature, step: "clips_url", data: {} },
         replies: [
           {
-            text: `🎬 <b>Best Clips</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}`,
+            text: `🎬 <b>Best Clips</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Optional: add clip lengths (seconds) after the link:\n<code>https://youtu.be/abc123  15,45,60</code></i>`,
             keyboard: "cancel",
           },
         ],
@@ -64,7 +66,7 @@ export function startFeature(feature: Feature): FlowAction {
         session: { feature, step: "cut_url", data: {} },
         replies: [
           {
-            text: `✂️ <b>Clip Cut</b>\n\n<b>Step 1 of 3</b> — Send your YouTube link:\n\n${URL_HINT}`,
+            text: `✂️ <b>Clip Cut</b>\n\n<b>Step 1 of 3</b> — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Shortcut: send link + start + end in one go:\n<code>https://youtu.be/abc123  1:00  2:30</code></i>`,
             keyboard: "cancel",
           },
         ],
@@ -74,7 +76,7 @@ export function startFeature(feature: Feature): FlowAction {
         session: { feature, step: "subtitles_url", data: {} },
         replies: [
           {
-            text: `📝 <b>Subtitles</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Subtitles will be sent as a .srt file</i>`,
+            text: `📝 <b>Subtitles</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Result arrives as a .srt file.\nOptional: add a language code for translation:\n<code>https://youtu.be/abc123  hi</code> (Hindi)\n<code>https://youtu.be/abc123  en</code> (English)</i>`,
             keyboard: "cancel",
           },
         ],
@@ -84,7 +86,7 @@ export function startFeature(feature: Feature): FlowAction {
         session: { feature, step: "timestamps_url", data: {} },
         replies: [
           {
-            text: `⏱ <b>AI Timestamps</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Optionally add instructions after the link:\n<code>https://youtu.be/abc123  Make 10 detailed chapters</code></i>`,
+            text: `⏱ <b>AI Timestamps</b>\n\nStep 1 of 1 — Send your YouTube link:\n\n${URL_HINT}\n\n<i>Optional: add instructions after the link:\n<code>https://youtu.be/abc123  Make 10 detailed chapters</code></i>`,
             keyboard: "cancel",
           },
         ],
@@ -107,6 +109,7 @@ export function startFeature(feature: Feature): FlowAction {
 const INVALID_URL_MSG = `❌ Please send a valid YouTube URL:\n${URL_HINT}`;
 const INVALID_TIME_MSG = (eg1: string, eg2: string, eg3: string) =>
   `❌ <b>Invalid time</b>\n\nAccepted formats:\n• MM:SS → <code>${eg1}</code>\n• Seconds → <code>${eg2}</code>\n• HH:MM:SS → <code>${eg3}</code>`;
+const MAX_CLIP_DURATION_S = 3600; // VMS hard limit: 60 min
 
 /** Pure: given current session + incoming text, return the next action. */
 export function handleText(session: SessionState, text: string): FlowAction {
@@ -120,11 +123,50 @@ export function handleText(session: SessionState, text: string): FlowAction {
   }
 
   switch (session.step) {
-    // ── Clip Cut: 3-step form ──────────────────────────────────────────────
+    // ── Clip Cut: 3-step form (with single-line shortcut) ─────────────────
     case "cut_url": {
-      if (!isValidUrl(t)) return keep(session, INVALID_URL_MSG, "cancel");
+      const parts = t.split(/\s+/);
+      const url = parts[0] ?? "";
+      if (!isYouTubeUrl(url)) return keep(session, INVALID_URL_MSG, "cancel");
+
+      // Single-line shortcut: url start end all at once
+      if (parts.length >= 3) {
+        const start = parseSeconds(parts[1] ?? "");
+        const end = parseSeconds(parts[2] ?? "");
+        if (start !== null && end !== null) {
+          if (end <= start) {
+            return keep(
+              session,
+              `❌ End time must be <b>after</b> start time.\n\nStart: <code>${fmtTime(start)}</code>  End: <code>${fmtTime(end)}</code>\n\nSend all three values again:`,
+              "cancel",
+            );
+          }
+          if (end - start > MAX_CLIP_DURATION_S) {
+            return keep(
+              session,
+              `❌ Clip too long — VMS supports up to <b>60 minutes</b>.\n\nSend all three values again with a shorter range:`,
+              "cancel",
+            );
+          }
+          return {
+            session: null,
+            replies: [
+              {
+                text: `✅ <b>Cutting clip</b>\n\nFrom <code>${fmtTime(start)}</code> to <code>${fmtTime(end)}</code> (${fmtTime(end - start)} long)`,
+              },
+            ],
+            startJob: {
+              feature: "cut",
+              endpoint: "clip-cut",
+              payload: { url, startTime: start, endTime: end },
+            },
+          };
+        }
+      }
+
+      // Normal wizard path: URL only → ask for start time
       return {
-        session: { ...session, step: "cut_start", data: { url: t } },
+        session: { ...session, step: "cut_start", data: { url } },
         replies: [
           {
             text: `✂️ <b>Clip Cut</b>\n\n<b>Step 2 of 3</b> — Send the <b>start time</b>:\n\nExamples: <code>1:23</code>  or  <code>83</code>  or  <code>0:01:23</code>`,
@@ -160,6 +202,13 @@ export function handleText(session: SessionState, text: string): FlowAction {
           "cancel",
         );
       }
+      if (end - start > MAX_CLIP_DURATION_S) {
+        return keep(
+          session,
+          `❌ Clip too long — VMS supports up to <b>60 minutes</b>.\n\nStart: <code>${fmtTime(start)}</code>. Send a closer end time:`,
+          "cancel",
+        );
+      }
       return {
         session: null,
         replies: [
@@ -177,12 +226,12 @@ export function handleText(session: SessionState, text: string): FlowAction {
 
     // ── Download: URL then button choice ───────────────────────────────────
     case "download_url": {
-      if (!isValidUrl(t)) return keep(session, INVALID_URL_MSG, "cancel");
+      if (!isYouTubeUrl(t)) return keep(session, INVALID_URL_MSG, "cancel");
       return {
         session: { ...session, step: "download_type", data: { url: t } },
         replies: [
           {
-            text: `⬇️ <b>Step 2 of 2</b> — What do you want to download?`,
+            text: `⬇️ <b>Step 2 of 2</b> — What do you want to download?\n\n<code>${esc(t)}</code>`,
             keyboard: "download_type",
           },
         ],
@@ -200,7 +249,7 @@ export function handleText(session: SessionState, text: string): FlowAction {
     case "clips_url": {
       const parts = t.split(/\s+/);
       const url = parts[0] ?? "";
-      if (!isValidUrl(url)) return keep(session, INVALID_URL_MSG, "cancel");
+      if (!isYouTubeUrl(url)) return keep(session, INVALID_URL_MSG, "cancel");
       const durStr = parts[1];
       const durations =
         durStr
@@ -222,22 +271,25 @@ export function handleText(session: SessionState, text: string): FlowAction {
       };
     }
     case "subtitles_url": {
-      const url = t.split(/\s+/)[0] ?? "";
-      if (!isValidUrl(url)) return keep(session, INVALID_URL_MSG, "cancel");
+      const parts = t.split(/\s+/);
+      const url = parts[0] ?? "";
+      if (!isYouTubeUrl(url)) return keep(session, INVALID_URL_MSG, "cancel");
+      const lang = parts[1]?.trim().toLowerCase() || "auto";
+      const langNote = lang !== "auto" ? ` in <b>${esc(lang)}</b>` : "";
       return {
         session: null,
-        replies: [{ text: "📝 Generating subtitles…" }],
+        replies: [{ text: `📝 Generating subtitles${langNote}…` }],
         startJob: {
           feature: "subtitles",
           endpoint: "subtitles",
-          payload: { url, language: "auto" },
+          payload: { url, language: lang },
         },
       };
     }
     case "timestamps_url": {
       const spaceIdx = t.indexOf(" ");
       const url = spaceIdx !== -1 ? t.slice(0, spaceIdx) : t;
-      if (!isValidUrl(url)) return keep(session, INVALID_URL_MSG, "cancel");
+      if (!isYouTubeUrl(url)) return keep(session, INVALID_URL_MSG, "cancel");
       const instructions = spaceIdx !== -1 ? t.slice(spaceIdx + 1).trim() : undefined;
       return {
         session: null,
@@ -266,9 +318,14 @@ export function handleDownloadChoice(
       ],
     };
   }
+  const typeLabel = audioOnly ? "🎵 Audio (MP3)" : "🎬 Video (MP4)";
   return {
     session: null,
-    replies: [{ text: audioOnly ? "✅ Extracting audio…" : "✅ Downloading video…" }],
+    replies: [
+      {
+        text: `✅ ${audioOnly ? "Extracting audio" : "Downloading video"}…\n\n${typeLabel}\n<code>${esc(url)}</code>`,
+      },
+    ],
     startJob: {
       feature: "download",
       endpoint: "download",

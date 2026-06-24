@@ -3,6 +3,7 @@ import {
   parseSeconds,
   fmtTime,
   isValidUrl,
+  isYouTubeUrl,
   esc,
   chunkMessage,
   formatResult,
@@ -59,7 +60,7 @@ describe("fmtTime", () => {
 });
 
 describe("isValidUrl", () => {
-  it("accepts http/https", () => {
+  it("accepts any http/https URL", () => {
     expect(isValidUrl("https://youtu.be/abc")).toBe(true);
     expect(isValidUrl("http://example.com")).toBe(true);
     expect(isValidUrl("  https://x.com/y  ")).toBe(true);
@@ -69,6 +70,31 @@ describe("isValidUrl", () => {
     expect(isValidUrl("ftp://x.com")).toBe(false);
     expect(isValidUrl("javascript:alert(1)")).toBe(false);
     expect(isValidUrl("")).toBe(false);
+  });
+});
+
+describe("isYouTubeUrl", () => {
+  it("accepts youtube.com variants", () => {
+    expect(isYouTubeUrl("https://www.youtube.com/watch?v=abc")).toBe(true);
+    expect(isYouTubeUrl("https://youtube.com/watch?v=abc")).toBe(true);
+    expect(isYouTubeUrl("https://m.youtube.com/watch?v=abc")).toBe(true);
+    expect(isYouTubeUrl("http://youtube.com/watch?v=abc")).toBe(true);
+  });
+  it("accepts youtu.be short links", () => {
+    expect(isYouTubeUrl("https://youtu.be/abc123")).toBe(true);
+    expect(isYouTubeUrl("  https://youtu.be/abc  ")).toBe(true);
+  });
+  it("rejects non-YouTube URLs", () => {
+    expect(isYouTubeUrl("https://vimeo.com/123")).toBe(false);
+    expect(isYouTubeUrl("https://example.com")).toBe(false);
+    expect(isYouTubeUrl("https://fakeyoutube.com/watch")).toBe(false);
+    expect(isYouTubeUrl("https://youtu.be.evil.com/abc")).toBe(false);
+  });
+  it("rejects non-http protocols and plain text", () => {
+    expect(isYouTubeUrl("ftp://youtube.com/watch")).toBe(false);
+    expect(isYouTubeUrl("youtube.com/watch")).toBe(false);
+    expect(isYouTubeUrl("not a url")).toBe(false);
+    expect(isYouTubeUrl("")).toBe(false);
   });
 });
 
@@ -175,6 +201,13 @@ describe("formatResult", () => {
     );
     expect(r.messages[0]).toContain("Intro");
     expect(r.messages[0]).toContain("1:05");
+  });
+
+  it("rawFallback uses a friendly wrapper instead of bare JSON", () => {
+    const r = formatResult({ ...base, result: { weird: "shape" } }, "clips");
+    expect(r.messages[0]).toContain("Done!");
+    expect(r.messages[0]).toContain("couldn't format it nicely");
+    expect(r.messages[0]).toContain("weird");
   });
 });
 

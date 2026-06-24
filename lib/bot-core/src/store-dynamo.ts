@@ -5,6 +5,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  UpdateCommand,
   DeleteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import type { SessionState } from "./flow.js";
@@ -23,7 +24,7 @@ function client(): DynamoDBDocumentClient {
  * Single-table design. Partition key `pk`:
  *   SESSION#<userId>   → session state
  *   JOB#<jobId>        → job mapping (who to notify)
- *   LOCK#<userId>      → per-user in-flight lock
+ *   LOCK#<userId>      → per-user in-flight lock (carries jobId once started)
  * All rows carry a numeric `ttl` (epoch seconds) for auto-expiry.
  */
 export class DynamoStore implements SessionStore, JobStore {
@@ -116,6 +117,31 @@ export class DynamoStore implements SessionStore, JobStore {
       }
       throw err;
     }
+  }
+
+  /** Record the jobId in the lock item once the job has been started. */
+  async setLockJob(userId: number, jobId: string): Promise<void> {
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.table,
+          Key: { pk: `LOCK#${userId}` },
+          UpdateExpression: "SET jobId = :j",
+          ExpressionAttributeValues: { ":j": jobId },
+        }),
+      );
+    } catch {
+      // Non-fatal: the lock item may have expired. Delivery still works via JOB# record.
+    }
+  }
+
+  /** Returns the jobId for the user's active lock, or null if not locked / no job started yet. */
+  async getActiveJobId(userId: number): Promise<string | null> {
+    const r = await this.doc.send(
+      new GetCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } }),
+    );
+    if (!r.Item) return null;
+    return (r.Item["jobId"] as string | undefined) ?? null;
   }
 
   async unlock(userId: number): Promise<void> {
