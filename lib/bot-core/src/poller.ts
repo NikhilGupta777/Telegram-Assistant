@@ -38,7 +38,7 @@ export async function runJobPoller(
   event: BotPollerEvent,
   opts: { intervalMs?: number; stopAfterMs?: number } = {},
 ): Promise<void> {
-  const intervalMs = opts.intervalMs ?? 3000;
+  const intervalMs = opts.intervalMs ?? 10000;
   const stopAfterMs = opts.stopAfterMs ?? 5 * 60 * 1000;
   const t0 = Date.now();
   const deadline = t0 + stopAfterMs;

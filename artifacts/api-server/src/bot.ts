@@ -38,9 +38,10 @@ export const bot = createBot(token, {
     const userId = ctx.from!.id;
     const chatId = ctx.chat!.id;
 
-    if (!(await jobs.tryLock(userId))) {
+    const allowed = await jobs.tryLock(userId);
+    if (!allowed) {
       await ctx.reply(
-        `⚠️ <b>Rate limit exceeded</b>\n\nYou can submit up to 10 clip cuts/downloads every 3 minutes. Please wait a moment before trying again, or use /cancel to clear running jobs.`,
+        `⚠️ <b>Rate limit exceeded</b>\n\nYou can submit up to 10 clip cuts/downloads every 3 minutes. Please wait a moment before trying again.`,
         { parse_mode: "HTML" },
       );
       return;
