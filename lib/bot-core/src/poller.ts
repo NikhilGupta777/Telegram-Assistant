@@ -70,7 +70,7 @@ export async function runJobPoller(
           await deps.onDelivered(event.jobId, event.userId).catch(() => {});
         }
         await deps.jobs.delete(event.jobId).catch(() => {});
-        await deps.jobs.unlock(event.userId).catch(() => {});
+        await deps.jobs.unlock(event.userId, event.jobId).catch(() => {});
       }
       return;
     }

@@ -39,29 +39,22 @@ export const bot = createBot(token, {
     const chatId = ctx.chat!.id;
 
     if (!(await jobs.tryLock(userId))) {
-      const activeJobId = await jobs.getActiveJobId(userId);
-      let featureHint = "";
-      if (activeJobId) {
-        const mapping = await jobs.getJob(activeJobId);
-        if (mapping) {
-          featureHint = ` (${FEATURE_EMOJI[mapping.feature] ?? ""} ${mapping.feature})`;
-        }
-      }
       await ctx.reply(
-        `⏳ You already have a job running${featureHint}. Please wait, or press /cancel to stop it.`,
+        `⚠️ <b>Rate limit exceeded</b>\n\nYou can submit up to 10 clip cuts/downloads every 3 minutes. Please wait a moment before trying again, or use /cancel to clear running jobs.`,
         { parse_mode: "HTML" },
       );
       return;
     }
 
     let statusMessageId: number | undefined;
+    let started: any;
     try {
       const status = await ctx.reply(`⏳ <b>Working on it…</b>\n\n🔄 Starting up…`, {
         parse_mode: "HTML",
       });
       statusMessageId = status.message_id;
 
-      const started = await startJobForChat(
+      started = await startJobForChat(
         job.feature,
         job.endpoint,
         job.payload,
@@ -126,7 +119,7 @@ export const bot = createBot(token, {
             }`;
       await ctx.reply(friendly, { parse_mode: "HTML", ...retryKb(job.feature) });
     } finally {
-      await jobs.unlock(userId);
+      await jobs.unlock(userId, started?.jobId);
     }
   },
 });

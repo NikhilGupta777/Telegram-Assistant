@@ -70,7 +70,7 @@ export interface JobStore {
   setLockJob(userId: number, jobId: string): Promise<void>;
   /** Returns the jobId for the user's active lock, or null if not locked. */
   getActiveJobId(userId: number): Promise<string | null>;
-  unlock(userId: number): Promise<void>;
+  unlock(userId: number, jobId?: string): Promise<void>;
   /**
    * Atomic exactly-once delivery claim. Returns true if THIS caller won the
    * race to deliver the result for `jobId` (and should call deliverResult);
@@ -111,7 +111,7 @@ export class MemoryJobStore implements JobStore {
     if (!this.locks.has(userId)) return null;
     return this.locks.get(userId) ?? null;
   }
-  async unlock(userId: number): Promise<void> {
+  async unlock(userId: number, jobId?: string): Promise<void> {
     this.locks.delete(userId);
   }
   async markDelivered(jobId: string): Promise<boolean> {

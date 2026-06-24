@@ -129,7 +129,7 @@ export async function handler(
       ...(payload.message ? { errorMessage: payload.message } : {}),
     }).catch(() => {});
     await store.delete(payload.jobId);
-    await store.unlock(mapping.userId);
+    await store.unlock(mapping.userId, payload.jobId);
   }
 
   return { statusCode: 200, body: "ok" };

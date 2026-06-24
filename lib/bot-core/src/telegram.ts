@@ -162,13 +162,17 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
    * the session. Safe to call even when no job is running.
    */
   async function cancelUserJob(userId: number): Promise<void> {
-    const activeJobId = await deps.jobs.getActiveJobId(userId);
-    if (activeJobId) {
-      // Best-effort: VMS may not support cancellation for all endpoints.
-      void cancelJob(activeJobId).catch(() => {});
-      await deps.jobs.delete(activeJobId).catch(() => {});
-      await deps.jobs.unlock(userId);
+    const activeJobIdsStr = await deps.jobs.getActiveJobId(userId);
+    if (activeJobIdsStr) {
+      const activeJobIds = activeJobIdsStr.split(",");
+      for (const jobId of activeJobIds) {
+        // Best-effort: VMS may not support cancellation for all endpoints.
+        void cancelJob(jobId).catch(() => {});
+        await deps.jobs.delete(jobId).catch(() => {});
+      }
     }
+    // Always release the lock (concurrency / rate limiter state) and clear session.
+    await deps.jobs.unlock(userId).catch(() => {});
     await sessions.clear(userId);
   }
 

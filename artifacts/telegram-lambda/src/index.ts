@@ -71,19 +71,11 @@ async function getBot() {
         const userId = ctx.from!.id;
         const chatId = ctx.chat!.id;
 
-        // Per-user concurrency guard.
-        const locked = await store.tryLock(userId);
-        if (!locked) {
-          const activeJobId = await store.getActiveJobId(userId);
-          let featureHint = "";
-          if (activeJobId) {
-            const mapping = await store.getJob(activeJobId);
-            if (mapping) {
-              featureHint = ` (${FEATURE_EMOJI[mapping.feature] ?? ""} ${mapping.feature})`;
-            }
-          }
+        // Rate limit check: max 10 clip cuts/downloads every 3 minutes.
+        const allowed = await store.tryLock(userId);
+        if (!allowed) {
           await ctx.reply(
-            `⏳ You already have a job running${featureHint}. Please wait, or press /cancel to stop it.`,
+            `⚠️ <b>Rate limit exceeded</b>\n\nYou can submit up to 10 clip cuts/downloads every 3 minutes. Please wait a moment before trying again, or use /cancel to clear running jobs.`,
             { parse_mode: "HTML" },
           );
           return;
@@ -145,12 +137,12 @@ async function getBot() {
                     ...(current.message ? { errorMessage: current.message } : {}),
                   }).catch(() => {});
                   await store.delete(started.jobId).catch(() => {});
-                  await store.unlock(userId);
+                  await store.unlock(userId, started.jobId);
                 }
               } else {
                 // Webhook already won — just release the lock.
                 await store.delete(started.jobId).catch(() => {});
-                await store.unlock(userId);
+                await store.unlock(userId, started.jobId);
               }
               return;
             }

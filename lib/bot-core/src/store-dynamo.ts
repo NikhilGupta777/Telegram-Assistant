@@ -104,22 +104,37 @@ export class DynamoStore implements SessionStore, JobStore {
     );
   }
 
-  // ── Per-user lock (conditional put) ──
+  // ── Per-user lock (sliding window rate limiter: max 10 jobs per 3 mins) ──
   async tryLock(userId: number): Promise<boolean> {
+    const pk = `RATELIMIT#${userId}`;
     try {
+      const r = await this.doc.send(
+        new GetCommand({ TableName: this.table, Key: { pk } })
+      );
+      const item = r.Item as { timestamps?: number[] } | undefined;
+      const now = Date.now();
+      const threeMinsAgo = now - 3 * 60 * 1000;
+
+      const activeTimestamps = (item?.timestamps ?? []).filter((t) => t > threeMinsAgo);
+      if (activeTimestamps.length >= 10) {
+        return false;
+      }
+
+      activeTimestamps.push(now);
       await this.doc.send(
         new PutCommand({
           TableName: this.table,
-          Item: { pk: `LOCK#${userId}`, ttl: this.ttl(LOCK_TTL_MS) },
-          ConditionExpression: "attribute_not_exists(pk)",
-        }),
+          Item: {
+            pk,
+            timestamps: activeTimestamps,
+            ttl: Math.floor((activeTimestamps[0]! + 3 * 60 * 1000) / 1000),
+          },
+        })
       );
       return true;
     } catch (err) {
-      if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
-        return false;
-      }
-      throw err;
+      console.error("Rate limit check failed, bailing open to allow request:", err);
+      return true;
     }
   }
 
@@ -130,25 +145,55 @@ export class DynamoStore implements SessionStore, JobStore {
         new UpdateCommand({
           TableName: this.table,
           Key: { pk: `LOCK#${userId}` },
-          UpdateExpression: "SET jobId = :j",
-          ExpressionAttributeValues: { ":j": jobId },
+          UpdateExpression: "ADD jobIds :j SET ttl = :t",
+          ExpressionAttributeValues: {
+            ":j": new Set([jobId]),
+            ":t": Math.floor((Date.now() + 15 * 60 * 1000) / 1000),
+          },
         }),
       );
-    } catch {
-      // Non-fatal: the lock item may have expired. Delivery still works via JOB# record.
+    } catch (err) {
+      console.error("Failed to set lock job:", err);
     }
   }
 
-  /** Returns the jobId for the user's active lock, or null if not locked / no job started yet. */
+  /** Returns the jobId(s) for the user's active lock (comma-separated string), or null if not locked. */
   async getActiveJobId(userId: number): Promise<string | null> {
     const r = await this.doc.send(
-      new GetCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } }),
+      new GetCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` }, ConsistentRead: true }),
     );
     if (!r.Item) return null;
+    const jobIds = r.Item["jobIds"];
+    if (jobIds instanceof Set) {
+      const arr = Array.from(jobIds) as string[];
+      return arr.length ? arr.join(",") : null;
+    }
     return (r.Item["jobId"] as string | undefined) ?? null;
   }
 
-  async unlock(userId: number): Promise<void> {
+  async unlock(userId: number, jobId?: string): Promise<void> {
+    if (jobId) {
+      try {
+        const r = await this.doc.send(
+          new UpdateCommand({
+            TableName: this.table,
+            Key: { pk: `LOCK#${userId}` },
+            UpdateExpression: "DELETE jobIds :j",
+            ExpressionAttributeValues: { ":j": new Set([jobId]) },
+            ReturnValues: "ALL_NEW",
+          })
+        );
+        const updated = r.Attributes as { jobIds?: Set<string> } | undefined;
+        if (!updated?.jobIds || updated.jobIds.size === 0) {
+          await this.doc.send(
+            new DeleteCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } })
+          );
+        }
+        return;
+      } catch {
+        // Fall back to full delete if set operation fails
+      }
+    }
     await this.doc.send(
       new DeleteCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } }),
     );
