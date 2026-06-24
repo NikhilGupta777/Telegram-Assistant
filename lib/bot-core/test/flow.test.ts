@@ -141,14 +141,13 @@ describe("download flow", () => {
     });
   });
 
-  it("download confirmation includes URL and type", () => {
+  it("download confirmation no longer returns a reply", () => {
     let s = startFeature("download").session!;
     s = handleText(s, "https://youtu.be/abc").session!;
     const video = handleDownloadChoice(s, false);
-    expect(video.replies[0]!.text).toContain("https://youtu.be/abc");
-    expect(video.replies[0]!.text).toContain("Video");
+    expect(video.replies).toHaveLength(0);
     const audio = handleDownloadChoice(s, true);
-    expect(audio.replies[0]!.text).toContain("Audio");
+    expect(audio.replies).toHaveLength(0);
   });
 
   it("nudges the user to tap a button while on download_type", () => {
