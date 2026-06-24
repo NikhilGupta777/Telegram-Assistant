@@ -237,9 +237,7 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     await ctx.reply("✅ Cancelled.", MAIN_MENU);
   });
 
-  bot.command("chatid", async (ctx) => {
-    await ctx.reply(`This Chat ID is: <code>${ctx.chat.id}</code>`, { parse_mode: "HTML" });
-  });
+
 
   bot.command("history", async (ctx) => {
     if (!deps.recentJobs) {
@@ -301,31 +299,15 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
       await runAction(ctx, ctx.from!.id, startFeature(feature));
     });
 
-    bot.command(feature, async (ctx) => {
-      await cancelUserJob(ctx.from.id);
-      await runAction(ctx, ctx.from.id, startFeature(feature));
-    });
-  }
-
-  bot.command("audio", async (ctx) => {
-    await cancelUserJob(ctx.from.id);
-    const userId = ctx.from.id;
-    const text = ctx.message.text.trim();
-    const parts = text.split(/\s+/);
-    if (parts.length > 1 && isYouTubeUrl(parts[1])) {
-      const url = parts[1];
-      await runAction(ctx, userId, {
-        session: null,
-        replies: [{ text: `✅ Extracting audio…\n\n🎵 Audio (MP3)\n<code>${esc(url)}</code>` }],
-        startJob: { feature: "download", endpoint: "download", payload: { url, audioOnly: true } }
-      });
-    } else {
-      await runAction(ctx, userId, {
-        session: { feature: "download", step: "download_url", data: { audioOnly: true } },
-        replies: [{ text: `🎵 <b>Audio Only</b>\n\nSend your YouTube link:\n\n${esc("https://youtu.be/abc123")}`, forceReply: true, keyboard: "cancel" }]
+    if (feature !== "clips") {
+      bot.command(feature, async (ctx) => {
+        await cancelUserJob(ctx.from.id);
+        await runAction(ctx, ctx.from.id, startFeature(feature));
       });
     }
-  });
+  }
+
+
 
   // ── Download type buttons ──
   bot.action("dl:video", async (ctx) => {
