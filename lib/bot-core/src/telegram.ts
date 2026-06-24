@@ -237,6 +237,10 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     await ctx.reply("✅ Cancelled.", MAIN_MENU);
   });
 
+  bot.command("chatid", async (ctx) => {
+    await ctx.reply(`This Chat ID is: <code>${ctx.chat.id}</code>`, { parse_mode: "HTML" });
+  });
+
   bot.command("history", async (ctx) => {
     if (!deps.recentJobs) {
       await ctx.reply(
