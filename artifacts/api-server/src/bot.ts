@@ -13,6 +13,8 @@ import {
   VmsError,
   friendlyError,
   PROGRESS_MSGS,
+  type JobEnvelope,
+  formatJobStart,
 } from "@workspace/bot-core";
 import type { Context } from "telegraf";
 import {
@@ -52,7 +54,8 @@ export const bot = createBot(token, {
     let statusMessageId: number | undefined;
     let started: any;
     try {
-      const status = await ctx.reply(`⏳ <b>Working on it…</b>\n\n🔄 Starting up…`, {
+      const prefix = formatJobStart(job.feature, job.payload);
+      const status = await ctx.reply(`${prefix}⏳ <b>Working on it…</b>\n\n🔄 Starting up…`, {
         parse_mode: "HTML",
       });
       statusMessageId = status.message_id;
@@ -80,12 +83,13 @@ export const bot = createBot(token, {
         const pct = current.progress != null ? ` ${current.progress}%` : "";
         const msg = PROGRESS_MSGS[tick % PROGRESS_MSGS.length]!;
         tick++;
+        const prefix = formatJobStart(job.feature, job.payload);
         try {
           await ctx.telegram.editMessageText(
             chatId,
             statusMessageId!,
             undefined,
-            `⏳ <b>Working on it…</b>\n\n🔄 ${msg}${pct}`,
+            `${prefix}⏳ <b>Working on it…</b>\n\n🔄 ${msg}${pct}`,
             { parse_mode: "HTML" },
           );
         } catch {

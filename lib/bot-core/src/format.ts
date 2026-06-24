@@ -377,3 +377,24 @@ export function friendlyError(code: string | undefined, fallback: string): strin
       return fallback;
   }
 }
+
+export function formatJobStart(feature: Feature, payload: Record<string, unknown>): string {
+  switch (feature) {
+    case "cut": {
+      const start = payload.startTime as number | undefined;
+      const end = payload.endTime as number | undefined;
+      if (start != null && end != null) {
+        return `✂️ <b>Cutting clip</b> (${fmtTime(start)} to ${fmtTime(end)})\n\n`;
+      }
+      return `✂️ <b>Cutting clip</b>\n\n`;
+    }
+    case "clips":
+      return `🎬 <b>Finding best clips</b>\n\n`;
+    case "download":
+      return `⬇️ <b>${payload.audioOnly ? "Extracting audio" : "Downloading video"}</b>\n\n`;
+    case "subtitles":
+      return `📝 <b>Generating subtitles & transcript</b>\n\n`;
+    case "timestamps":
+      return `⏱ <b>Generating AI timestamps</b>\n\n`;
+  }
+}

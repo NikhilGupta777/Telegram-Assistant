@@ -22,6 +22,7 @@ import {
   pollJob,
   runJobPoller,
   type BotPollerEvent,
+  formatJobStart,
 } from "@workspace/bot-core";
 import { upsertUser, recordJobStart, recentJobs, recordJobFinish } from "@workspace/db/repo";
 
@@ -90,8 +91,9 @@ async function getBot() {
             job.payload,
           )}`.slice(0, 200);
 
+          const prefix = formatJobStart(job.feature, job.payload);
           const status = await ctx.reply(
-            `⏳ <b>Job started!</b>\n\nI'll send you the result as soon as it's ready.`,
+            `${prefix}⏳ <b>Working on it…</b>\n\n🔄 Starting up…`,
             { parse_mode: "HTML" },
           );
 
