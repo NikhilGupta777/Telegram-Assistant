@@ -121,6 +121,44 @@ export function handleText(session: SessionState, text: string): FlowAction {
   const t = text.trim();
 
   if (!session.step) {
+    const parts = t.split(/\s+/);
+    const url = parts[0] ?? "";
+
+    // Auto-detect Cut shortcut: URL + start + end
+    if (parts.length >= 3 && isYouTubeUrl(url)) {
+      const start = parseSeconds(parts[1] ?? "");
+      const end = parseSeconds(parts[2] ?? "");
+      if (start !== null && end !== null) {
+        if (end <= start) {
+          return keep(
+            session,
+            `❌ End time must be <b>after</b> start time.\n\nStart: <code>${fmtTime(start)}</code>  End: <code>${fmtTime(end)}</code>\n\nSend all three values again:`,
+            "cancel",
+          );
+        }
+        if (end - start > MAX_CLIP_DURATION_S) {
+          return keep(
+            session,
+            `❌ Clip too long — maximum is <b>13 minutes</b>.\n\nSend all three values again with a shorter range:`,
+            "cancel",
+          );
+        }
+        return {
+          session: null,
+          replies: [
+            {
+              text: `✅ <b>Cutting clip</b>\n\nFrom <code>${fmtTime(start)}</code> to <code>${fmtTime(end)}</code> (${fmtTime(end - start)} long)`,
+            },
+          ],
+          startJob: {
+            feature: "cut",
+            endpoint: "clip-cut",
+            payload: { url, startTime: start, endTime: end },
+          },
+        };
+      }
+    }
+
     return {
       session: session, // unchanged
       replies: [{ text: "👇 Choose a feature to get started:", keyboard: "main" }],
