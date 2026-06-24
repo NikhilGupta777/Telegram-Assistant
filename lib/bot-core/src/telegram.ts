@@ -9,7 +9,7 @@ import {
   type SessionState,
 } from "./flow.js";
 import type { Feature } from "./format.js";
-import { chunkMessage, esc } from "./format.js";
+import { chunkMessage, esc, isYouTubeUrl } from "./format.js";
 import {
   startJob,
   cancelJob,
@@ -293,15 +293,39 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     await ctx.reply("✅ Cancelled.", MAIN_MENU);
   });
 
-  // ── Feature buttons ──
+  // ── Feature buttons & commands ──
   for (const feature of ["clips", "cut", "subtitles", "timestamps", "download"] as const) {
     bot.action(`feat:${feature}`, async (ctx) => {
       await ctx.answerCbQuery();
-      // Clear any stale session before starting fresh (no currentSession — fresh prompt).
       await cancelUserJob(ctx.from!.id);
       await runAction(ctx, ctx.from!.id, startFeature(feature));
     });
+
+    bot.command(feature, async (ctx) => {
+      await cancelUserJob(ctx.from.id);
+      await runAction(ctx, ctx.from.id, startFeature(feature));
+    });
   }
+
+  bot.command("audio", async (ctx) => {
+    await cancelUserJob(ctx.from.id);
+    const userId = ctx.from.id;
+    const text = ctx.message.text.trim();
+    const parts = text.split(/\s+/);
+    if (parts.length > 1 && isYouTubeUrl(parts[1])) {
+      const url = parts[1];
+      await runAction(ctx, userId, {
+        session: null,
+        replies: [{ text: `✅ Extracting audio…\n\n🎵 Audio (MP3)\n<code>${esc(url)}</code>` }],
+        startJob: { feature: "download", endpoint: "download", payload: { url, audioOnly: true } }
+      });
+    } else {
+      await runAction(ctx, userId, {
+        session: { feature: "download", step: "download_url", data: { audioOnly: true } },
+        replies: [{ text: `🎵 <b>Audio Only</b>\n\nSend your YouTube link:\n\n${esc("https://youtu.be/abc123")}`, forceReply: true, keyboard: "cancel" }]
+      });
+    }
+  });
 
   // ── Download type buttons ──
   bot.action("dl:video", async (ctx) => {

@@ -234,6 +234,9 @@ export function handleText(session: SessionState, text: string): FlowAction {
     // ── Download: URL then button choice ───────────────────────────────────
     case "download_url": {
       if (!isYouTubeUrl(t)) return keep(session, INVALID_URL_MSG, "cancel");
+      if (session.data?.["audioOnly"]) {
+        return handleDownloadChoice({ ...session, data: { ...session.data, url: t } }, true);
+      }
       return {
         session: { ...session, step: "download_type", data: { url: t } },
         replies: [
