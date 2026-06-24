@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Narayan Bhakt Editor — Telegram bot for the VideoMaking Studio API.
+  Lambda A receives Telegram updates and starts VMS jobs (with a webhookUrl);
+  VMS calls Lambda B on completion, which delivers the result to the chat.
+  State lives in DynamoDB; secrets in SSM Parameter Store. Stays in free tier
+  for personal use.
+
+Parameters:
+  TelegramBotTokenParam:
+    Type: String
+    Default: /bot/telegram-bot-token
+    Description: SSM parameter name holding the Telegram bot token.
+  TelegramWebhookSecretParam:
+    Type: String
+    Default: /bot/telegram-webhook-secret
+    Description: SSM parameter name holding the Telegram secret_token.
+  VmsApiKeyParam:
+    Type: String
+    Default: /bot/vms-api-key
+    Description: SSM parameter name holding the VMS API key.
+  VmsWebhookSecretParam:
+    Type: String
+    Default: /bot/vms-webhook-secret
+    Description: SSM parameter name holding the VMS webhook signing secret.
+  DatabaseUrl:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Optional Postgres URL for /history. Leave blank to disable.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 30
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref BotTable
+        SSM_TELEGRAM_BOT_TOKEN: !Ref TelegramBotTokenParam
+        SSM_TELEGRAM_WEBHOOK_SECRET: !Ref TelegramWebhookSecretParam
+        SSM_VMS_API_KEY: !Ref VmsApiKeyParam
+        SSM_VMS_WEBHOOK_SECRET: !Ref VmsWebhookSecretParam
+        DATABASE_URL: !Ref DatabaseUrl
+
+Resources:
+  BotTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ── Lambda B: VMS webhook → delivers result to Telegram ──────────────────────
+  VmsWebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: artifacts/vms-webhook-lambda/dist/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BotTable
+        - SSMParameterReadPolicy:
+            ParameterName: bot/*
+      FunctionUrlConfig:
+        AuthType: NONE
+
+  # ── Lambda A: Telegram webhook → starts VMS jobs ─────────────────────────────
+  TelegramFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: artifacts/telegram-lambda/dist/
+      Handler: index.handler
+      Environment:
+        Variables:
+          # VMS calls this URL when a job finishes (Lambda B's Function URL).
+          VMS_WEBHOOK_BASE_URL: !GetAtt VmsWebhookFunctionUrl.FunctionUrl
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BotTable
+        - SSMParameterReadPolicy:
+            ParameterName: bot/*
+      FunctionUrlConfig:
+        AuthType: NONE
+
+Outputs:
+  TelegramWebhookUrl:
+    Description: Set this as your Telegram setWebhook URL (with secret_token).
+    Value: !GetAtt TelegramFunctionUrl.FunctionUrl
+  VmsWebhookUrl:
+    Description: Register this as the webhookUrl base in VMS (also auto-wired to Lambda A).
+    Value: !GetAtt VmsWebhookFunctionUrl.FunctionUrl
+  TableName:
+    Value: !Ref BotTable

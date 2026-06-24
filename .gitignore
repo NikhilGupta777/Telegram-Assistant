@@ -37,6 +37,14 @@ yarn-error.log
 testem.log
 /typings
 
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# AWS SAM build artifacts
+.aws-sam/
+
 # System Files
 .DS_Store
 Thumbs.db

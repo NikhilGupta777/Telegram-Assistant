@@ -16,10 +16,22 @@ if (Number.isNaN(port) || port <= 0) {
 
 const WEBHOOK_PATH = "/api/telegram/webhook";
 
+const WEBHOOK_SECRET = process.env["TELEGRAM_WEBHOOK_SECRET"];
+
 app.post(WEBHOOK_PATH, (req: Request, res: Response) => {
-  bot.handleUpdate(req.body, res).catch((err) => {
+  // Reject spoofed updates if a secret is configured.
+  if (WEBHOOK_SECRET) {
+    const provided = req.header("x-telegram-bot-api-secret-token");
+    if (provided !== WEBHOOK_SECRET) {
+      res.sendStatus(401);
+      return;
+    }
+  }
+  // Ack Telegram immediately; process the update in the background so a long
+  // job never blocks the webhook (which would trigger Telegram retries).
+  res.sendStatus(200);
+  void bot.handleUpdate(req.body).catch((err) => {
     logger.error({ err }, "Error handling Telegram update");
-    if (!res.headersSent) res.sendStatus(500);
   });
 });
 
@@ -38,7 +50,10 @@ async function startBot() {
 
   const webhookUrl = `https://${domain}${WEBHOOK_PATH}`;
   try {
-    await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
+    await bot.telegram.setWebhook(webhookUrl, {
+      drop_pending_updates: true,
+      ...(WEBHOOK_SECRET ? { secret_token: WEBHOOK_SECRET } : {}),
+    });
     logger.info({ webhookUrl }, "Telegram webhook set — bot ready");
   } catch (err) {
     logger.error({ err }, "Failed to set Telegram webhook");
@@ -48,6 +63,7 @@ async function startBot() {
     await bot.telegram.setMyCommands([
       { command: "start", description: "🏠 Main menu" },
       { command: "help", description: "❓ How to use this bot" },
+      { command: "history", description: "🕘 Your recent jobs" },
       { command: "cancel", description: "❌ Cancel current action" },
     ]);
     logger.info("Bot commands registered");

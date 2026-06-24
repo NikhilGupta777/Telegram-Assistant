@@ -1,0 +1,84 @@
+name: Deploy
+
+# Auto-deploys to AWS on every push to main (after CI passes).
+# Requires these GitHub repo secrets:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY   (an IAM user/role allowed to deploy)
+# and optionally the variable AWS_REGION (defaults to us-east-1).
+# The SSM parameters (/bot/*) must already exist — see DEPLOY.md §2.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck + test (gate the deploy)
+        run: |
+          pnpm run typecheck
+          pnpm test
+
+      - name: Build Lambda bundles
+        run: |
+          pnpm --filter @workspace/telegram-lambda run build
+          pnpm --filter @workspace/vms-webhook-lambda run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM deploy
+        run: |
+          sam deploy \
+            --stack-name narayan-bhakt-bot \
+            --resolve-s3 \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --capabilities CAPABILITY_IAM \
+            ${DATABASE_URL:+--parameter-overrides DatabaseUrl="$DATABASE_URL"}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Sync Telegram webhook
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "TELEGRAM_BOT_TOKEN secret not set — skipping webhook sync."
+            exit 0
+          fi
+          URL=$(aws cloudformation describe-stacks \
+            --stack-name narayan-bhakt-bot \
+            --query "Stacks[0].Outputs[?OutputKey=='TelegramWebhookUrl'].OutputValue" \
+            --output text)
+          echo "Setting Telegram webhook to $URL"
+          curl -fsS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+            -d "url=$URL" \
+            -d "secret_token=$TELEGRAM_WEBHOOK_SECRET" \
+            -d "drop_pending_updates=true"
