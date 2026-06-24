@@ -97,29 +97,24 @@ secret** in the VMS developer panel matches `/bot/vms-webhook-secret`.
   "Job started"; when VMS finishes, Lambda B posts the result.
 - Logs: `sam logs --stack-name <stack> --tail` (or per function in CloudWatch).
 
-## Auto-deploy from GitHub (CI/CD)
+## Auto-deploy from GitHub (CI/CD) — already wired up
 
 `.github/workflows/deploy.yml` deploys to AWS on every push to `main`
 (typecheck + tests must pass first), then points Telegram at the new URL.
 
-**One-time setup** — in the GitHub repo → Settings → Secrets and variables → Actions:
+**Keyless — no secrets stored in GitHub.** It authenticates via GitHub OIDC,
+assuming an IAM role, and reads the bot token from SSM at deploy time.
 
-| Secret | Purpose |
-| --- | --- |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | An IAM user allowed to run `sam deploy` (CloudFormation, Lambda, DynamoDB, IAM, S3, SSM read). |
-| `TELEGRAM_BOT_TOKEN` | So the workflow can call `setWebhook` after deploy. |
-| `TELEGRAM_WEBHOOK_SECRET` | The same `secret_token` value stored in SSM. |
-| `DATABASE_URL` *(optional)* | Enables `/history`. |
+Already configured in this repo:
+- IAM role `github-actions-narayan-bhakt-deploy` (trusts
+  `repo:NikhilGupta777/Telegram-Assistant:*` via the account's GitHub OIDC provider)
+- GitHub repo **variables** `AWS_DEPLOY_ROLE_ARN` and `AWS_REGION`
 
-Optional repo **variable** `AWS_REGION` (defaults to `us-east-1`).
+So `git push` to `main` = build → typecheck → test → `sam deploy` → re-point the
+Telegram webhook. Nothing else to set.
 
-You still run the **one-time SSM step (§2)** yourself — the workflow reads those
-parameters but never creates them. After that, `git push` = deploy.
-
-> Prefer not to store long-lived AWS keys? Swap the `configure-aws-credentials`
-> step for GitHub OIDC: create an IAM role trusting
-> `token.actions.githubusercontent.com` and set `role-to-assume` instead of the
-> access-key secrets.
+> To deploy to a different repo/account, recreate the OIDC role with that repo
+> in the trust policy's `sub` condition and update `AWS_DEPLOY_ROLE_ARN`.
 
 ## Local development (no AWS)
 

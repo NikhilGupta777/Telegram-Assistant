@@ -44,6 +44,8 @@ testem.log
 
 # AWS SAM build artifacts
 .aws-sam/
+packaged.yaml
+.deploy-*.json
 
 # System Files
 .DS_Store
