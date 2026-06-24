@@ -100,21 +100,30 @@ async function getBot() {
           });
 
           // Idempotency replay: when the user re-issues an identical clip-cut
-          // (same URL + same times → same Idempotency-Key), VMS short-circuits
-          // and returns the already-completed envelope without re-firing its
-          // webhook. The bot would otherwise wait forever for a webhook that
-          // never comes. Detect the terminal status and deliver inline.
-          if (isTerminal(started)) {
-            try {
-              const full = await pollJob(started.jobId).catch(() => started);
-              await deliverResult(ctx.telegram, chatId, job.feature, full, {
-                statusMessageId: status.message_id,
-              });
-            } finally {
-              await store.delete(started.jobId).catch(() => {});
-              await store.unlock(userId);
+          // (same URL + same times → same Idempotency-Key), VMS returns the
+          // SUBMIT-TIME stored envelope (status="queued") and will NOT re-fire
+          // its webhook — even if the original job has long since completed.
+          // We detect the replay via the Idempotent-Replayed response header
+          // (started.replayed), poll for the real current status, and either
+          // deliver inline (terminal) or fall through to the webhook flow
+          // (the rare case where the original is still mid-flight and its
+          // webhook is still pending).
+          if (started.replayed || isTerminal(started)) {
+            const current = await pollJob(started.jobId).catch(() => started);
+            if (isTerminal(current)) {
+              try {
+                await deliverResult(ctx.telegram, chatId, job.feature, current, {
+                  statusMessageId: status.message_id,
+                });
+              } finally {
+                await store.delete(started.jobId).catch(() => {});
+                await store.unlock(userId);
+              }
+              return;
             }
-            return;
+            // Replay of a still-running job: the original webhook is still
+            // pending and will fire on completion — keep the mapping and
+            // fall through to the normal wait path below.
           }
         } catch (err) {
           await store.unlock(userId);

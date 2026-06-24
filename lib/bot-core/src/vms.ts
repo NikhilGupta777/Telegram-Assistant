@@ -39,6 +39,12 @@ export interface JobEnvelope {
   progress?: number;
   /** VMS error code (e.g. RATE_LIMIT_EXCEEDED). Mapped to friendly copy. */
   errorCode?: string;
+  /**
+   * True when VMS replied with the stored response of a prior identical
+   * request (matched on Idempotency-Key). For replays VMS will NOT re-fire
+   * the webhook, so the caller must poll the job's current status itself.
+   */
+  replayed?: boolean;
 }
 
 /** Shape of the body VMS POSTs to our webhookUrl on completion. */
@@ -169,7 +175,11 @@ export async function startJob(
     body: JSON.stringify(body),
   });
   if (!res.ok) throw await toVmsError(res);
-  return (await res.json()) as JobEnvelope;
+  const envelope = (await res.json()) as JobEnvelope;
+  if (res.headers.get("idempotent-replayed") === "true") {
+    envelope.replayed = true;
+  }
+  return envelope;
 }
 
 export async function pollJob(jobId: string): Promise<JobEnvelope> {
