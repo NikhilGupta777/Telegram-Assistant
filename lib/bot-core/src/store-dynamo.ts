@@ -141,16 +141,32 @@ export class DynamoStore implements SessionStore, JobStore {
   /** Record the jobId in the lock item once the job has been started. */
   async setLockJob(userId: number, jobId: string): Promise<void> {
     try {
+      const pk = `LOCK#${userId}`;
+      const r = await this.doc.send(
+        new GetCommand({ TableName: this.table, Key: { pk }, ConsistentRead: true })
+      );
+      const item = r.Item as { jobIds?: string[]; jobId?: string } | undefined;
+
+      let jobIds: string[] = [];
+      if (item?.jobIds && Array.isArray(item.jobIds)) {
+        jobIds = [...item.jobIds];
+      } else if (item?.jobId) {
+        jobIds = [item.jobId];
+      }
+
+      if (jobId && !jobIds.includes(jobId)) {
+        jobIds.push(jobId);
+      }
+
       await this.doc.send(
-        new UpdateCommand({
+        new PutCommand({
           TableName: this.table,
-          Key: { pk: `LOCK#${userId}` },
-          UpdateExpression: "ADD jobIds :j SET ttl = :t",
-          ExpressionAttributeValues: {
-            ":j": new Set([jobId]),
-            ":t": Math.floor((Date.now() + 15 * 60 * 1000) / 1000),
+          Item: {
+            pk,
+            jobIds,
+            ttl: Math.floor((Date.now() + 15 * 60 * 1000) / 1000),
           },
-        }),
+        })
       );
     } catch (err) {
       console.error("Failed to set lock job:", err);
@@ -159,44 +175,74 @@ export class DynamoStore implements SessionStore, JobStore {
 
   /** Returns the jobId(s) for the user's active lock (comma-separated string), or null if not locked. */
   async getActiveJobId(userId: number): Promise<string | null> {
-    const r = await this.doc.send(
-      new GetCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` }, ConsistentRead: true }),
-    );
-    if (!r.Item) return null;
-    const jobIds = r.Item["jobIds"];
-    if (jobIds instanceof Set) {
-      const arr = Array.from(jobIds) as string[];
-      return arr.length ? arr.join(",") : null;
+    try {
+      const r = await this.doc.send(
+        new GetCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` }, ConsistentRead: true }),
+      );
+      if (!r.Item) return null;
+
+      const jobIds = r.Item["jobIds"];
+      if (Array.isArray(jobIds)) {
+        const arr = jobIds.filter((id): id is string => typeof id === "string" && id.length > 0);
+        return arr.length ? arr.join(",") : null;
+      }
+
+      if (jobIds instanceof Set) {
+        const arr = Array.from(jobIds) as string[];
+        return arr.length ? arr.join(",") : null;
+      }
+
+      return (r.Item["jobId"] as string | undefined) ?? null;
+    } catch (err) {
+      console.error("Failed to get active job ID:", err);
+      return null;
     }
-    return (r.Item["jobId"] as string | undefined) ?? null;
   }
 
   async unlock(userId: number, jobId?: string): Promise<void> {
-    if (jobId) {
-      try {
+    try {
+      const pk = `LOCK#${userId}`;
+      if (jobId) {
         const r = await this.doc.send(
-          new UpdateCommand({
-            TableName: this.table,
-            Key: { pk: `LOCK#${userId}` },
-            UpdateExpression: "DELETE jobIds :j",
-            ExpressionAttributeValues: { ":j": new Set([jobId]) },
-            ReturnValues: "ALL_NEW",
-          })
+          new GetCommand({ TableName: this.table, Key: { pk }, ConsistentRead: true })
         );
-        const updated = r.Attributes as { jobIds?: Set<string> } | undefined;
-        if (!updated?.jobIds || updated.jobIds.size === 0) {
-          await this.doc.send(
-            new DeleteCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } })
-          );
+        const item = r.Item as { jobIds?: string[]; jobId?: string } | undefined;
+
+        let jobIds: string[] = [];
+        if (item?.jobIds && Array.isArray(item.jobIds)) {
+          jobIds = [...item.jobIds];
+        } else if (item?.jobId) {
+          jobIds = [item.jobId];
         }
-        return;
-      } catch {
-        // Fall back to full delete if set operation fails
+
+        const filtered = jobIds.filter((id) => id !== jobId);
+        if (filtered.length > 0) {
+          await this.doc.send(
+            new PutCommand({
+              TableName: this.table,
+              Item: {
+                pk,
+                jobIds: filtered,
+                ttl: Math.floor((Date.now() + 15 * 60 * 1000) / 1000),
+              },
+            })
+          );
+          return;
+        }
       }
+
+      await this.doc.send(
+        new DeleteCommand({ TableName: this.table, Key: { pk } }),
+      );
+    } catch (err) {
+      console.error("Failed to unlock user:", err);
+      // Fallback to full delete to be safe
+      try {
+        await this.doc.send(
+          new DeleteCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } })
+        );
+      } catch {}
     }
-    await this.doc.send(
-      new DeleteCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } }),
-    );
   }
 
   /**
