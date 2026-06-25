@@ -1,15 +1,19 @@
 # Deploying the bot to AWS
 
 Architecture: **Lambda A** (Telegram webhook) starts VMS jobs and stores
-`jobId → chatId` in **DynamoDB**; **Lambda B** receives the VMS completion
-webhook and delivers the result to the chat. Secrets live in **SSM Parameter
-Store**. Both Lambdas are exposed via **Function URLs**. Cost ≈ $0/month for
-personal use (Lambda + DynamoDB + SSM free tiers).
+state in **DynamoDB** using atomic String Sets for bulletproof locks and rate limiting.
+Lambda A also triggers an asynchronous self-invoke (the **Lambda Poller**) with exponential backoff.
+This poller races against **Lambda B** (which receives the VMS completion webhook) to deliver the result.
+DynamoDB's `attribute_not_exists` condition guarantees exactly-once delivery to the chat.
+Secrets live in **SSM Parameter Store**. Both Lambdas are exposed via **Function URLs**. 
+Cost ≈ $0/month for personal use (Lambda + DynamoDB + SSM free tiers).
 
 ```
 Telegram ──▶ Lambda A ──▶ VMS API ──(webhook)──▶ Lambda B ──▶ Telegram
-                │                                    ▲
-                └────────── DynamoDB (jobId→chatId) ─┘
+                │  │                                 ▲          ▲
+                │  └─────(async self-invoke)─────────┤          │
+                │             [Lambda Poller]        │          │
+                └────────── DynamoDB (Atomic Locks) ─┴──────────┘
 ```
 
 ## Prerequisites
