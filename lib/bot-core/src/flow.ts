@@ -43,10 +43,6 @@ export interface FlowAction {
 
 const URL_HINT = `<code>https://youtu.be/abc123</code>`;
 
-function reply(text: string, keyboard: Keyboard = "none") {
-  return { replies: [{ text, keyboard }], session: undefined as never };
-}
-
 // ─── Feature entry points (called from button taps) ──────────────────────────
 
 export function startFeature(feature: Feature): FlowAction {
@@ -232,8 +228,18 @@ export function handleText(session: SessionState, text: string): FlowAction {
     }
     case "cut_end": {
       const end = parseSeconds(t);
-      const start = session.data?.["startTime"] as number;
-      const url = session.data?.["url"] as string;
+      const start = session.data?.["startTime"] as number | undefined;
+      const url = session.data?.["url"] as string | undefined;
+      // Session lost its earlier answers (expired/cleared) — restart cleanly
+      // instead of starting a job with undefined start/url.
+      if (start === undefined || url === undefined) {
+        return {
+          session: null,
+          replies: [
+            { text: "⚠️ Session expired. Please start again:", keyboard: "main" },
+          ],
+        };
+      }
       if (end === null)
         return keep(session, INVALID_TIME_MSG("2:45", "165", "0:02:45"), "cancel");
       if (end <= start) {
@@ -264,9 +270,6 @@ export function handleText(session: SessionState, text: string): FlowAction {
     // ── Download: URL then button choice ───────────────────────────────────
     case "download_url": {
       if (!isYouTubeUrl(t)) return keep(session, INVALID_URL_MSG, "cancel");
-      if (session.data?.["audioOnly"]) {
-        return handleDownloadChoice({ ...session, data: { ...session.data, url: t } }, true);
-      }
       return {
         session: { ...session, step: "download_type", data: { url: t } },
         replies: [
@@ -341,6 +344,13 @@ export function handleText(session: SessionState, text: string): FlowAction {
       };
     }
   }
+
+  // Defensive: an unrecognised/corrupt stored step — reset to the menu rather
+  // than returning undefined (which would crash the adapter).
+  return {
+    session: null,
+    replies: [{ text: "👇 Choose a feature to get started:", keyboard: "main" }],
+  };
 }
 
 /** Download button taps (video/audio). Returns null reply if session lost. */

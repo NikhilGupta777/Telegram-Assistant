@@ -27,12 +27,22 @@ async function getDeps(): Promise<Deps> {
   depsPromise = (async () => {
     const cfg = await loadConfigFromSsm();
     const tableName = cfg.tableName ?? process.env["TABLE_NAME"]!;
+    if (!cfg.vmsWebhookSecret) {
+      console.warn(
+        "[vms-webhook] VMS_WEBHOOK_SECRET is empty — ALL webhooks will fail " +
+          "signature verification and be rejected; delivery falls back to the poller only.",
+      );
+    }
     return {
       telegram: new Telegram(cfg.telegramBotToken),
       store: new DynamoStore(tableName),
       webhookSecret: cfg.vmsWebhookSecret,
     };
   })();
+  // Don't cache a rejected init on the warm container.
+  depsPromise.catch(() => {
+    depsPromise = undefined;
+  });
   return depsPromise;
 }
 

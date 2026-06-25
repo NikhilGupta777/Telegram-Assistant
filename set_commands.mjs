@@ -12,6 +12,7 @@ if (!token) {
 const commands = [
   { command: "start", description: "Main menu" },
   { command: "help", description: "How to use this bot" },
+  { command: "history", description: "Your recent jobs" },
   { command: "cancel", description: "Cancel current action" },
   { command: "cut", description: "Clip Cut" },
   { command: "subtitles", description: "Subtitles" },

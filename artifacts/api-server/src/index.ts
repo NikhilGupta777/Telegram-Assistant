@@ -72,13 +72,17 @@ async function startBot() {
   }
 }
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+// Note: Express's listen callback receives no error argument — listen errors
+// (e.g. EADDRINUSE) are emitted as an 'error' event on the server, so handle
+// them there rather than in the callback.
+const server = app.listen(port, () => {
   logger.info({ port }, "Server listening");
   void startBot();
+});
+
+server.on("error", (err) => {
+  logger.error({ err }, "Error listening on port");
+  process.exit(1);
 });
 
 process.once("SIGINT", () => bot.telegram.deleteWebhook().catch(() => null));

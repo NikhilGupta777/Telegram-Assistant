@@ -14,6 +14,10 @@ import type { SessionStore, JobStore, JobMapping } from "./store.js";
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const LOCK_TTL_MS = 15 * 60 * 1000;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function client(): DynamoDBDocumentClient {
   return DynamoDBDocumentClient.from(new DynamoDBClient({}), {
     marshallOptions: { removeUndefinedValues: true },
@@ -104,34 +108,36 @@ export class DynamoStore implements SessionStore, JobStore {
     );
   }
 
-  // ── Per-user lock (sliding window rate limiter: max 10 jobs per 3 mins) ──
+  // ── Per-user rate limit (atomic fixed-window counter: max 10 jobs / 3 min) ──
+  // Uses a per-window row keyed by RATELIMIT#<userId>#<windowStart> and an
+  // atomic ADD so concurrent requests can't race past the limit (the previous
+  // read-modify-write on a shared row could be bypassed under burst). A fixed
+  // window can allow up to ~2× the limit across a boundary — an acceptable
+  // tradeoff for correctness and simplicity over a racy sliding window.
   async tryLock(userId: number): Promise<boolean> {
-    const pk = `RATELIMIT#${userId}`;
+    const windowMs = 3 * 60 * 1000;
+    const max = 10;
+    const now = Date.now();
+    const windowStart = Math.floor(now / windowMs) * windowMs;
+    const pk = `RATELIMIT#${userId}#${windowStart}`;
     try {
       const r = await this.doc.send(
-        new GetCommand({ TableName: this.table, Key: { pk } })
-      );
-      const item = r.Item as { timestamps?: number[] } | undefined;
-      const now = Date.now();
-      const threeMinsAgo = now - 3 * 60 * 1000;
-
-      const activeTimestamps = (item?.timestamps ?? []).filter((t) => t > threeMinsAgo);
-      if (activeTimestamps.length >= 10) {
-        return false;
-      }
-
-      activeTimestamps.push(now);
-      await this.doc.send(
-        new PutCommand({
+        new UpdateCommand({
           TableName: this.table,
-          Item: {
-            pk,
-            timestamps: activeTimestamps,
-            ttl: Math.floor((activeTimestamps[0]! + 3 * 60 * 1000) / 1000),
+          Key: { pk },
+          UpdateExpression: "ADD #c :one SET #ttl = :ttl",
+          ExpressionAttributeNames: { "#c": "count", "#ttl": "ttl" },
+          ExpressionAttributeValues: {
+            ":one": 1,
+            // Keep the row a full extra window so late-arriving increments in
+            // the same window always land on a live row.
+            ":ttl": Math.floor((windowStart + 2 * windowMs) / 1000),
           },
+          ReturnValues: "UPDATED_NEW",
         })
       );
-      return true;
+      const count = Number(r.Attributes?.["count"] ?? 1);
+      return count <= max;
     } catch (err) {
       console.error("Rate limit check failed, bailing open to allow request:", err);
       return true;
@@ -266,25 +272,38 @@ export class DynamoStore implements SessionStore, JobStore {
    * sees a ConditionalCheckFailedException and skips delivery.
    */
   async markDelivered(jobId: string): Promise<boolean> {
-    try {
-      await this.doc.send(
-        new UpdateCommand({
-          TableName: this.table,
-          Key: { pk: `JOB#${jobId}` },
-          UpdateExpression: "SET delivered = :t",
-          ConditionExpression: "attribute_not_exists(delivered)",
-          ExpressionAttributeValues: { ":t": true },
-        }),
-      );
-      return true;
-    } catch (err) {
-      if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
-        return false;
+    // `attribute_exists(pk)` is CRITICAL: UpdateItem is an upsert, so a bare
+    // `attribute_not_exists(delivered)` condition would SUCCEED on a row that
+    // the winner already deleted — recreating a ghost row and returning "won",
+    // which re-delivers the result (the exact duplicate this guards against).
+    // Requiring the row to still exist makes the loser correctly see false.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await this.doc.send(
+          new UpdateCommand({
+            TableName: this.table,
+            Key: { pk: `JOB#${jobId}` },
+            UpdateExpression: "SET delivered = :t",
+            ConditionExpression:
+              "attribute_exists(pk) AND attribute_not_exists(delivered)",
+            ExpressionAttributeValues: { ":t": true },
+          }),
+        );
+        return true;
+      } catch (err) {
+        const name = (err as { name?: string }).name;
+        if (name === "ConditionalCheckFailedException") {
+          // Either someone already delivered, or the row was cleaned up — in
+          // both cases we must NOT deliver.
+          return false;
+        }
+        // Transient DDB error (network, throttle). Retry a couple of times
+        // before giving up so a blip doesn't drop the only delivery. Bailing
+        // to false on the last attempt preserves "skip rather than duplicate".
+        if (attempt === 2) return false;
+        await sleep(100 * (attempt + 1));
       }
-      // For unrelated DDB errors (network, throttling) we BAIL by returning
-      // false. Better to skip a delivery than to send duplicates. The retry
-      // path on the other side will catch it.
-      return false;
     }
+    return false;
   }
 }

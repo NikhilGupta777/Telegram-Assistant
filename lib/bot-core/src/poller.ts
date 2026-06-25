@@ -2,7 +2,7 @@ import type { Telegram } from "telegraf";
 import type { Feature } from "./format.js";
 import type { JobStore } from "./store.js";
 import { deliverResult } from "./deliver.js";
-import { pollJob, isTerminal } from "./vms.js";
+import { pollJob, isTerminal, type JobEnvelope } from "./vms.js";
 
 /**
  * Payload passed to the self-invoked poller Lambda. Lambda A submits a job
@@ -32,8 +32,12 @@ export async function runJobPoller(
   deps: {
     telegram: Telegram;
     jobs: JobStore;
-    /** Bot DDB cleanup helper — same one the webhook calls in its finally block. */
-    onDelivered?: (jobId: string, userId: number) => Promise<void>;
+    /**
+     * Bot DDB cleanup helper — same one the webhook calls in its finally block.
+     * Receives the terminal job envelope so callers can record the REAL status
+     * (success/failure) and result URL rather than assuming "done".
+     */
+    onDelivered?: (jobId: string, userId: number, job: JobEnvelope) => Promise<void>;
   },
   event: BotPollerEvent,
   opts: { intervalMs?: number; stopAfterMs?: number } = {},
@@ -71,7 +75,7 @@ export async function runJobPoller(
         await deliverResult(deps.telegram, event.chatId, event.feature, job, deliverOpts);
       } finally {
         if (deps.onDelivered) {
-          await deps.onDelivered(event.jobId, event.userId).catch(() => {});
+          await deps.onDelivered(event.jobId, event.userId, job).catch(() => {});
         }
         await deps.jobs.delete(event.jobId).catch(() => {});
         await deps.jobs.unlock(event.userId, event.jobId).catch(() => {});

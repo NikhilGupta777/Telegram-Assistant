@@ -66,7 +66,13 @@ export interface JobStore {
   put(mapping: JobMapping): Promise<void>;
   getJob(jobId: string): Promise<JobMapping | null>;
   delete(jobId: string): Promise<void>;
-  /** Returns true if the user has no in-flight job and the lock was taken. */
+  /**
+   * Rate-limit gate. Returns true if the user is allowed to start another job
+   * (under the per-user window cap), false if they've hit the limit. NOTE: this
+   * is a rate limiter, NOT a single-in-flight mutex — both the in-memory and
+   * DynamoDB stores allow several concurrent jobs up to the window cap. Per-job
+   * tracking for /cancel is handled separately via setLockJob/getActiveJobId.
+   */
   tryLock(userId: number): Promise<boolean>;
   /** Record which VMS jobId belongs to the current lock. Call after startJob. */
   setLockJob(userId: number, jobId: string): Promise<void>;
@@ -82,11 +88,20 @@ export interface JobStore {
   markDelivered(jobId: string): Promise<boolean>;
 }
 
-/** In-memory job store for the local dev runner. */
+/**
+ * In-memory job store for the local dev runner. Mirrors DynamoStore semantics:
+ * a fixed-window rate limit (max 10 / 3 min) plus a separate set of active
+ * jobIds per user for /cancel.
+ */
 export class MemoryJobStore implements JobStore {
+  private static readonly RATE_WINDOW_MS = 3 * 60 * 1000;
+  private static readonly RATE_MAX = 10;
+
   private readonly jobs = new Map<string, JobMapping>();
-  // Map userId → jobId (undefined = locked but job not started yet)
-  private readonly locks = new Map<number, string | undefined>();
+  // userId → set of in-flight jobIds (for /cancel + getActiveJobId).
+  private readonly locks = new Map<number, Set<string>>();
+  // `${userId}#${windowStart}` → count, for the fixed-window rate limit.
+  private readonly rate = new Map<string, number>();
   private readonly delivered = new Set<string>();
 
   async put(mapping: JobMapping): Promise<void> {
@@ -100,20 +115,38 @@ export class MemoryJobStore implements JobStore {
     this.delivered.delete(jobId);
   }
   async tryLock(userId: number): Promise<boolean> {
-    if (this.locks.has(userId)) return false;
-    this.locks.set(userId, undefined);
-    return true;
+    const windowStart =
+      Math.floor(Date.now() / MemoryJobStore.RATE_WINDOW_MS) *
+      MemoryJobStore.RATE_WINDOW_MS;
+    const key = `${userId}#${windowStart}`;
+    const count = (this.rate.get(key) ?? 0) + 1;
+    this.rate.set(key, count);
+    // Drop stale windows so the map can't grow unbounded over a long session.
+    for (const k of this.rate.keys()) {
+      if (!k.endsWith(`#${windowStart}`)) this.rate.delete(k);
+    }
+    return count <= MemoryJobStore.RATE_MAX;
   }
   async setLockJob(userId: number, jobId: string): Promise<void> {
-    if (this.locks.has(userId)) {
-      this.locks.set(userId, jobId);
-    }
+    if (!jobId) return;
+    const set = this.locks.get(userId) ?? new Set<string>();
+    set.add(jobId);
+    this.locks.set(userId, set);
   }
   async getActiveJobId(userId: number): Promise<string | null> {
-    if (!this.locks.has(userId)) return null;
-    return this.locks.get(userId) ?? null;
+    const set = this.locks.get(userId);
+    if (!set || set.size === 0) return null;
+    return Array.from(set).join(",");
   }
   async unlock(userId: number, jobId?: string): Promise<void> {
+    if (jobId) {
+      const set = this.locks.get(userId);
+      if (set) {
+        set.delete(jobId);
+        if (set.size === 0) this.locks.delete(userId);
+      }
+      return;
+    }
     this.locks.delete(userId);
   }
   async markDelivered(jobId: string): Promise<boolean> {

@@ -1,5 +1,5 @@
 import type { Telegram } from "telegraf";
-import { formatResult, type Feature } from "./format.js";
+import { formatResult, esc, type Feature } from "./format.js";
 import type { JobEnvelope } from "./vms.js";
 import { MAIN_MENU, retryKb } from "./keyboards.js";
 
@@ -83,7 +83,9 @@ export async function deliverResult(
       const start = opts.payload["startTime"] as number | undefined;
       const end = opts.payload["endTime"] as number | undefined;
       if (url) {
-        contextStr += `\n🔗 Link: <code>${url}</code>`;
+        // Escape: the stored URL is the raw user text, so an unescaped `<`/`&`
+        // would break HTML parse_mode and fail the whole sendMessage.
+        contextStr += `\n🔗 Link: <code>${esc(url)}</code>`;
       }
       if (start !== undefined && end !== undefined) {
         // Quick local format for time

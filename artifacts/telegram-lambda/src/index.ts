@@ -19,6 +19,7 @@ import {
   VmsError,
   friendlyError,
   isTerminal,
+  isSucceeded,
   pollJob,
   runJobPoller,
   type BotPollerEvent,
@@ -59,6 +60,13 @@ async function getBot() {
     const tableName = cfg.tableName ?? process.env["TABLE_NAME"]!;
     const store = new DynamoStore(tableName);
     const telegram = new Telegram(cfg.telegramBotToken);
+
+    if (!cfg.telegramWebhookSecret) {
+      console.warn(
+        "[telegram-lambda] TELEGRAM_WEBHOOK_SECRET is empty — incoming update " +
+          "verification is DISABLED; the function URL will accept spoofed updates.",
+      );
+    }
 
     // The VMS webhook base URL points at Lambda B's Function URL.
     const vmsWebhookUrl = cfg.vmsWebhookBaseUrl;
@@ -101,7 +109,12 @@ async function getBot() {
             job.feature,
             job.endpoint,
             job.payload,
-            { chatId, userId, statusMessageId: status.message_id },
+            {
+              chatId,
+              userId,
+              statusMessageId: status.message_id,
+              username: ctx.from?.username ?? ctx.from?.first_name,
+            },
             store,
             {
               ...(vmsWebhookUrl ? { webhookUrl: vmsWebhookUrl } : {}),
@@ -196,6 +209,11 @@ async function getBot() {
 
     return { bot, webhookSecret: cfg.telegramWebhookSecret, store, telegram };
   })();
+  // Don't cache a rejected init on the warm container — a transient SSM/DDB
+  // failure would otherwise poison every subsequent invocation until recycle.
+  botPromise.catch(() => {
+    botPromise = undefined;
+  });
   return botPromise;
 }
 
@@ -225,14 +243,14 @@ export async function handler(
       {
         telegram,
         jobs: store,
-        onDelivered: async (jobId) => {
-          const mapping = await store.getJob(jobId);
+        onDelivered: async (jobId, _userId, job) => {
+          // Record the REAL terminal status + result URL (not a hardcoded
+          // "done") so /history reflects failures correctly.
           await recordJobFinish({
             id: jobId,
-            status: "done",
-            // Result URL is captured in deliverResult's call path; record
-            // minimal here so the bot's history page reflects completion.
-            ...(mapping ? {} : {}),
+            status: job.status || (isSucceeded(job) ? "done" : "error"),
+            resultUrl: pickUrl(job.result),
+            ...(job.message ? { errorMessage: job.message } : {}),
           }).catch(() => {});
         },
       },
