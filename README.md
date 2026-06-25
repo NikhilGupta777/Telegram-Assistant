@@ -64,13 +64,87 @@ The AWS Lambda function that receives completions from the VideoMaking API.
 
 ---
 
-## 🚀 Deployment
+## 🚀 Deployment & AWS Configuration
 
-Deployment is fully automated via GitHub Actions (`.github/workflows/deploy.yml`). 
+This project is deployed using **AWS SAM (Serverless Application Model)**.
 
-Whenever you push to the `main` branch, GitHub Actions will:
-1. Run `pnpm run typecheck` to ensure there are no TypeScript errors.
-2. Run `pnpm test` to ensure the conversational flows aren't broken.
-3. Deploy the Lambdas to AWS using AWS SAM.
+### Prerequisites
 
-For first-time setup instructions (AWS SAM, DynamoDB, SSM Secrets), please read the [DEPLOY.md](./DEPLOY.md) file.
+- AWS CLI + [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), authenticated (`aws configure`).
+- Node 22 + pnpm (`pnpm install` already run).
+- Your Telegram bot token and VMS API key.
+
+### 1. Gather the secrets
+
+- **Telegram bot token** from [@BotFather](https://t.me/BotFather).
+- **VMS API key** (`vms_live_…`) from the developer panel.
+- Pick two random strings you invent:
+  - `TELEGRAM_WEBHOOK_SECRET` (Telegram echoes it back so we reject spoofed updates)
+  - `VMS_WEBHOOK_SECRET` (must match the webhook signing secret configured in VMS)
+
+### 2. Put secrets in SSM Parameter Store
+
+These are stored securely in AWS Systems Manager Parameter Store.
+```bash
+aws ssm put-parameter --name /bot/telegram-bot-token     --type SecureString --value 'NEW_TELEGRAM_TOKEN'
+aws ssm put-parameter --name /bot/telegram-webhook-secret --type SecureString --value 'YOUR_TG_WEBHOOK_SECRET'
+aws ssm put-parameter --name /bot/vms-api-key             --type SecureString --value 'NEW_VMS_KEY'
+aws ssm put-parameter --name /bot/vms-webhook-secret      --type SecureString --value 'YOUR_VMS_WEBHOOK_SECRET'
+```
+*(Re-run with `--overwrite` to update an existing value.)*
+
+### 3. Build the Lambda bundles + Deploy
+
+```bash
+# First time: guided (creates samconfig.toml)
+pnpm -r --filter "./artifacts/telegram-lambda" --filter "./artifacts/vms-webhook-lambda" run build
+sam deploy --guided
+
+# Subsequent deploys
+pnpm run deploy
+```
+
+> **Optional:** pass a Postgres URL to enable `/history`:
+> `sam deploy --parameter-overrides DatabaseUrl='postgres://…'`
+
+After deploy, note the two stack **Outputs**: `TelegramWebhookUrl` and `VmsWebhookUrl`.
+
+### 4. Point Telegram at Lambda A
+
+```bash
+TOKEN='NEW_TELEGRAM_TOKEN'
+TG_SECRET='YOUR_TG_WEBHOOK_SECRET'
+URL='<TelegramWebhookUrl from outputs>'
+
+curl -s "https://api.telegram.org/bot$TOKEN/setWebhook" \
+  -d "url=$URL" \
+  -d "secret_token=$TG_SECRET" \
+  -d "drop_pending_updates=true"
+
+# Register the bot's command menu
+curl -s "https://api.telegram.org/bot$TOKEN/setMyCommands" \
+  -H 'Content-Type: application/json' \
+  -d '{"commands":[
+    {"command":"start","description":"🏠 Main menu"},
+    {"command":"help","description":"❓ How to use this bot"},
+    {"command":"history","description":"🕘 Your recent jobs"},
+    {"command":"cancel","description":"❌ Cancel current action"}]}'
+```
+
+### 5. Tell VMS where to call back
+
+The bot automatically passes `webhookUrl=<VmsWebhookUrl>` to VMS on every request. Make sure the **webhook signing secret** in the VMS developer panel matches `/bot/vms-webhook-secret`.
+
+---
+
+## 🤖 CI/CD (GitHub Actions)
+
+This project auto-deploys via GitHub Actions (`.github/workflows/deploy.yml`) on every push to `main` (typecheck + tests must pass first).
+
+**Keyless Deployment:** No AWS credentials are stored in GitHub. It authenticates via GitHub OIDC, assuming an IAM role, and reads the bot token from SSM at deploy time.
+
+Already configured in this repo:
+- IAM role `github-actions-narayan-bhakt-deploy`
+- GitHub repo **variables** `AWS_DEPLOY_ROLE_ARN` and `AWS_REGION`
+
+So `git push` to `main` = build → typecheck → test → `sam deploy` → re-point the Telegram webhook. Nothing else to set!
