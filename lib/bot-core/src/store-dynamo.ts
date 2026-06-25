@@ -138,36 +138,42 @@ export class DynamoStore implements SessionStore, JobStore {
     }
   }
 
-  /** Record the jobId in the lock item once the job has been started. */
   async setLockJob(userId: number, jobId: string): Promise<void> {
+    if (!jobId) return;
     try {
       const pk = `LOCK#${userId}`;
-      const r = await this.doc.send(
-        new GetCommand({ TableName: this.table, Key: { pk }, ConsistentRead: true })
-      );
-      const item = r.Item as { jobIds?: string[]; jobId?: string } | undefined;
-
-      let jobIds: string[] = [];
-      if (item?.jobIds && Array.isArray(item.jobIds)) {
-        jobIds = [...item.jobIds];
-      } else if (item?.jobId) {
-        jobIds = [item.jobId];
+      try {
+        await this.doc.send(
+          new UpdateCommand({
+            TableName: this.table,
+            Key: { pk },
+            UpdateExpression: "ADD jobIds :jobId SET #ttl = :ttl",
+            ExpressionAttributeNames: { "#ttl": "ttl" },
+            ExpressionAttributeValues: {
+              ":jobId": new Set([jobId]),
+              ":ttl": Math.floor((Date.now() + 15 * 60 * 1000) / 1000),
+            },
+          })
+        );
+      } catch (err: any) {
+        if (err.name === "ValidationException") {
+          // Fallback if existing data is a List
+          const r = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk }, ConsistentRead: true }));
+          let arr: string[] = [];
+          if (r.Item?.["jobIds"] && Array.isArray(r.Item["jobIds"])) arr = [...r.Item["jobIds"]];
+          else if (r.Item?.["jobId"]) arr = [r.Item["jobId"]];
+          
+          if (!arr.includes(jobId)) arr.push(jobId);
+          await this.doc.send(
+            new PutCommand({
+              TableName: this.table,
+              Item: { pk, jobIds: new Set(arr), ttl: Math.floor((Date.now() + 15 * 60 * 1000) / 1000) },
+            })
+          );
+        } else {
+          throw err;
+        }
       }
-
-      if (jobId && !jobIds.includes(jobId)) {
-        jobIds.push(jobId);
-      }
-
-      await this.doc.send(
-        new PutCommand({
-          TableName: this.table,
-          Item: {
-            pk,
-            jobIds,
-            ttl: Math.floor((Date.now() + 15 * 60 * 1000) / 1000),
-          },
-        })
-      );
     } catch (err) {
       console.error("Failed to set lock job:", err);
     }
@@ -203,31 +209,39 @@ export class DynamoStore implements SessionStore, JobStore {
     try {
       const pk = `LOCK#${userId}`;
       if (jobId) {
-        const r = await this.doc.send(
-          new GetCommand({ TableName: this.table, Key: { pk }, ConsistentRead: true })
-        );
-        const item = r.Item as { jobIds?: string[]; jobId?: string } | undefined;
-
-        let jobIds: string[] = [];
-        if (item?.jobIds && Array.isArray(item.jobIds)) {
-          jobIds = [...item.jobIds];
-        } else if (item?.jobId) {
-          jobIds = [item.jobId];
-        }
-
-        const filtered = jobIds.filter((id) => id !== jobId);
-        if (filtered.length > 0) {
+        try {
           await this.doc.send(
-            new PutCommand({
+            new UpdateCommand({
               TableName: this.table,
-              Item: {
-                pk,
-                jobIds: filtered,
-                ttl: Math.floor((Date.now() + 15 * 60 * 1000) / 1000),
+              Key: { pk },
+              UpdateExpression: "DELETE jobIds :jobId",
+              ExpressionAttributeValues: {
+                ":jobId": new Set([jobId]),
               },
             })
           );
           return;
+        } catch (err: any) {
+          if (err.name === "ValidationException") {
+            // Fallback if existing data is a List
+            const r = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk }, ConsistentRead: true }));
+            let arr: string[] = [];
+            if (r.Item?.["jobIds"] && Array.isArray(r.Item["jobIds"])) arr = [...r.Item["jobIds"]];
+            else if (r.Item?.["jobId"]) arr = [r.Item["jobId"]];
+            
+            const filtered = arr.filter((id) => id !== jobId);
+            if (filtered.length > 0) {
+              await this.doc.send(
+                new PutCommand({
+                  TableName: this.table,
+                  Item: { pk, jobIds: new Set(filtered), ttl: Math.floor((Date.now() + 15 * 60 * 1000) / 1000) },
+                })
+              );
+              return;
+            }
+          } else {
+            throw err;
+          }
         }
       }
 
@@ -239,7 +253,7 @@ export class DynamoStore implements SessionStore, JobStore {
       // Fallback to full delete to be safe
       try {
         await this.doc.send(
-          new DeleteCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } })
+          new DeleteCommand({ TableName: this.table, Key: { pk: `LOCK#${userId}` } }),
         );
       } catch {}
     }

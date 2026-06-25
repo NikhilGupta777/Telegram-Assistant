@@ -225,6 +225,7 @@ export async function waitForJob(
     }
     if (isTerminal(job)) return job;
     await sleep(intervalMs);
+    intervalMs = Math.min(intervalMs * 1.5, 30000); // Exponential backoff up to 30s
   }
 }
 

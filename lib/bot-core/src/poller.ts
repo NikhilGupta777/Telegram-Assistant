@@ -42,6 +42,7 @@ export async function runJobPoller(
   const stopAfterMs = opts.stopAfterMs ?? 5 * 60 * 1000;
   const t0 = Date.now();
   const deadline = t0 + stopAfterMs;
+  let currentInterval = intervalMs;
 
   while (Date.now() < deadline) {
     let job;
@@ -49,7 +50,8 @@ export async function runJobPoller(
       job = await pollJob(event.jobId);
     } catch {
       // Transient VMS error — keep trying until deadline or webhook wins.
-      await sleep(intervalMs);
+      await sleep(currentInterval);
+      currentInterval = Math.min(currentInterval * 1.5, 30000);
       continue;
     }
 
@@ -59,10 +61,12 @@ export async function runJobPoller(
       if (!won) return;
 
       job.terminal = true;
-      const deliverOpts =
-        event.statusMessageId !== undefined
-          ? { statusMessageId: event.statusMessageId }
-          : {};
+      const mapping = await deps.jobs.getJob(event.jobId);
+      const deliverOpts = {
+        ...(event.statusMessageId !== undefined ? { statusMessageId: event.statusMessageId } : {}),
+        ...(mapping?.username ? { username: mapping.username } : {}),
+        ...(mapping?.payload ? { payload: mapping.payload } : {}),
+      };
       try {
         await deliverResult(deps.telegram, event.chatId, event.feature, job, deliverOpts);
       } finally {
@@ -83,7 +87,8 @@ export async function runJobPoller(
       if (!stillRegistered) return;
     }
 
-    await sleep(intervalMs);
+    await sleep(currentInterval);
+    currentInterval = Math.min(currentInterval * 1.5, 30000);
   }
   // Timed out — leave the mapping alone; the webhook may still arrive.
 }
