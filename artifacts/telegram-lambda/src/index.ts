@@ -125,11 +125,15 @@ async function getBot() {
           // Record the jobId in the lock so /cancel can terminate the VMS job.
           await store.setLockJob(userId, started.jobId);
 
+          // /history is non-essential — a DB blip must NOT throw into the
+          // outer catch (which would unlock and tear down the live job).
           await recordJobStart({
             id: started.jobId,
             userId,
             chatId,
             feature: job.feature,
+          }).catch((err) => {
+            console.warn("recordJobStart failed (job continues unaffected):", err);
           });
 
           // Idempotency replay or already-terminal job: VMS won't fire the
@@ -193,7 +197,13 @@ async function getBot() {
               });
           }
         } catch (err) {
-          await store.unlock(userId);
+          // Do NOT call store.unlock(userId) here — it would wipe the entire
+          // LOCK row, losing track of OTHER concurrent jobIds the user has
+          // in flight (the new multi-job rate-limited model). The failed
+          // submission either hadn't reached setLockJob yet (nothing to
+          // clean) or its jobId was added — either way, the safe action
+          // is to leave other users' jobs alone. /cancel and the natural
+          // delivery path will clean up anything that did get added.
           const emoji = FEATURE_EMOJI[job.feature] ?? "";
           const friendly =
             err instanceof VmsError
