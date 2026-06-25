@@ -390,22 +390,59 @@ export function friendlyError(code: string | undefined, fallback: string): strin
 }
 
 export function formatJobStart(feature: Feature, payload: Record<string, unknown>): string {
+  // Compact source-URL line so the user can tell which submission this
+  // status belongs to when several are running concurrently. Uses an
+  // HTML anchor so Telegram doesn't expand a giant preview card.
+  const url = typeof payload["url"] === "string" ? (payload["url"] as string) : "";
+  const link = url ? `\n🔗 <a href="${esc(url)}">${esc(shortYoutubeLabel(url))}</a>` : "";
+
   switch (feature) {
     case "cut": {
       const start = payload.startTime as number | undefined;
       const end = payload.endTime as number | undefined;
-      if (start != null && end != null) {
-        return `✂️ <b>Cutting clip</b> (${fmtTime(start)} to ${fmtTime(end)})`;
-      }
-      return `✂️ <b>Cutting clip</b>`;
+      const range =
+        start != null && end != null
+          ? ` (${fmtTime(start)} to ${fmtTime(end)})`
+          : "";
+      return `✂️ <b>Cutting clip</b>${range}${link}`;
     }
     case "clips":
-      return `🎬 <b>Finding best clips</b>`;
+      return `🎬 <b>Finding best clips</b>${link}`;
     case "download":
-      return `⬇️ <b>${payload.audioOnly ? "Extracting audio" : "Downloading video"}</b>`;
+      return `⬇️ <b>${payload.audioOnly ? "Extracting audio" : "Downloading video"}</b>${link}`;
     case "subtitles":
-      return `📝 <b>Generating subtitles & transcript</b>`;
+      return `📝 <b>Generating subtitles &amp; transcript</b>${link}`;
     case "timestamps":
-      return `⏱ <b>Generating AI timestamps</b>`;
+      return `⏱ <b>Generating AI timestamps</b>${link}`;
   }
+}
+
+/**
+ * "youtu.be/<id>" for any YouTube URL we recognise (watch / youtu.be /
+ * shorts / live / embed), else the raw URL truncated. The compact label
+ * is what shows in the message text; the <a href> still carries the
+ * full URL so the tap-target works correctly.
+ */
+export function shortYoutubeLabel(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl.trim());
+    const host = u.hostname.replace(/^(www\.|m\.)/, "");
+    if (host === "youtu.be") {
+      const id = u.pathname.replace(/^\/+/, "").split("/")[0];
+      if (id) return `youtu.be/${id}`;
+    }
+    if (host === "youtube.com") {
+      if (u.pathname === "/watch") {
+        const id = u.searchParams.get("v");
+        if (id) return `youtu.be/${id}`;
+      }
+      const parts = u.pathname.split("/").filter(Boolean);
+      if (parts.length >= 2 && ["live", "shorts", "embed"].includes(parts[0]!)) {
+        return `youtu.be/${parts[1]}`;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return rawUrl.length > 60 ? rawUrl.slice(0, 57) + "…" : rawUrl;
 }

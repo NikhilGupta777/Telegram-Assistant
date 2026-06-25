@@ -9,7 +9,7 @@ import {
   type SessionState,
 } from "./flow.js";
 import type { Feature } from "./format.js";
-import { chunkMessage, esc, isYouTubeUrl } from "./format.js";
+import { chunkMessage, esc, isYouTubeUrl, fmtTime, shortYoutubeLabel } from "./format.js";
 import {
   startJob,
   cancelJob,
@@ -167,12 +167,20 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   /**
    * Cancel any in-flight VMS job for this user, clean up the lock, and clear
    * the session. Safe to call even when no job is running.
+   *
+   * Returns the JobMapping rows that were cancelled so the caller can show
+   * the user what they killed (e.g. "✂️ Cut (0:01 → 0:08) — youtu.be/abc")
+   * instead of a bare "Cancelled" with no detail.
    */
-  async function cancelUserJob(userId: number): Promise<void> {
+  async function cancelUserJob(userId: number): Promise<JobMapping[]> {
+    const cancelled: JobMapping[] = [];
     const activeJobIdsStr = await deps.jobs.getActiveJobId(userId);
     if (activeJobIdsStr) {
-      const activeJobIds = activeJobIdsStr.split(",");
+      const activeJobIds = activeJobIdsStr.split(",").filter((s) => s);
       for (const jobId of activeJobIds) {
+        // Capture the mapping BEFORE delete so we can describe it to the user.
+        const mapping = await deps.jobs.getJob(jobId).catch(() => null);
+        if (mapping) cancelled.push(mapping);
         // Best-effort: VMS may not support cancellation for all endpoints.
         void cancelJob(jobId).catch(() => {});
         await deps.jobs.delete(jobId).catch(() => {});
@@ -181,6 +189,32 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
     // Always release the lock (concurrency / rate limiter state) and clear session.
     await deps.jobs.unlock(userId).catch(() => {});
     await sessions.clear(userId);
+    return cancelled;
+  }
+
+  /** Build a one-line description of a cancelled job for the /cancel reply. */
+  function describeCancelled(m: JobMapping): string {
+    const emoji = FEATURE_EMOJI[m.feature] ?? "•";
+    let range = "";
+    const start = m.payload?.["startTime"];
+    const end = m.payload?.["endTime"];
+    if (typeof start === "number" && typeof end === "number") {
+      range = ` (${fmtTime(start)} → ${fmtTime(end)})`;
+    }
+    const url = typeof m.payload?.["url"] === "string" ? (m.payload["url"] as string) : "";
+    const link = url ? ` — <a href="${esc(url)}">${esc(shortYoutubeLabel(url))}</a>` : "";
+    return `${emoji} <b>${m.feature}</b>${range}${link}`;
+  }
+
+  /** Build the user-facing reply for /cancel / ❌ Cancel. */
+  function cancelReply(cancelled: JobMapping[]): string {
+    if (cancelled.length === 0) return "✅ <b>Nothing to cancel.</b>";
+    if (cancelled.length === 1)
+      return `✅ <b>Cancelled:</b>\n${describeCancelled(cancelled[0]!)}`;
+    return (
+      `✅ <b>Cancelled ${cancelled.length} jobs:</b>\n` +
+      cancelled.map(describeCancelled).join("\n")
+    );
   }
 
   // ── Access Control ──
@@ -233,8 +267,12 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   });
 
   bot.command("cancel", async (ctx) => {
-    await cancelUserJob(ctx.from.id);
-    await ctx.reply("✅ Cancelled.", MAIN_MENU);
+    const cancelled = await cancelUserJob(ctx.from.id);
+    await ctx.reply(cancelReply(cancelled), {
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+      ...MAIN_MENU,
+    });
   });
 
 
@@ -287,8 +325,12 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
 
   bot.action("cancel", async (ctx) => {
     await ctx.answerCbQuery("Cancelled ✅");
-    await cancelUserJob(ctx.from!.id);
-    await ctx.reply("✅ Cancelled.", MAIN_MENU);
+    const cancelled = await cancelUserJob(ctx.from!.id);
+    await ctx.reply(cancelReply(cancelled), {
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+      ...MAIN_MENU,
+    });
   });
 
   // ── Feature buttons & commands ──

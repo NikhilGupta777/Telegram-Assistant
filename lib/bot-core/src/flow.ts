@@ -183,13 +183,14 @@ export function handleText(session: SessionState, text: string): FlowAction {
               "cancel",
             );
           }
+          // No wizard confirmation reply — Lambda A's onStartJob sends a
+          // single status message via formatJobStart that auto-deletes on
+          // result delivery. The wizard's "✅ Cutting clip From X to Y"
+          // message used to linger forever and visually duplicate the
+          // status message; dropping it keeps the chat clean.
           return {
             session: null,
-            replies: [
-              {
-                text: `✅ <b>Cutting clip</b>\n\nFrom <code>${fmtTime(start)}</code> to <code>${fmtTime(end)}</code> (${fmtTime(end - start)} long)`,
-              },
-            ],
+            replies: [],
             startJob: {
               feature: "cut",
               endpoint: "clip-cut",
@@ -367,7 +368,6 @@ export function handleDownloadChoice(
       ],
     };
   }
-  const typeLabel = audioOnly ? "🎵 Audio (MP3)" : "🎬 Video (MP4)";
   return {
     session: null,
     replies: [],
