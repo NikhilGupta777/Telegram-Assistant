@@ -82,11 +82,11 @@ async function getBot() {
         const userId = ctx.from!.id;
         const chatId = ctx.chat!.id;
 
-        // Rate limit check: max 10 clip cuts/downloads every 3 minutes.
+        // Rate limit check: max 15 clip cuts/downloads every 3 minutes.
         const allowed = await store.tryLock(userId);
         if (!allowed) {
           await ctx.reply(
-            `⚠️ <b>Rate limit exceeded</b>\n\nYou can submit up to 10 clip cuts/downloads every 3 minutes. Please wait a moment before trying again.`,
+            `⚠️ <b>Rate limit exceeded</b>\n\nYou can submit up to 15 clip cuts/downloads every 3 minutes. Please wait a moment before trying again.`,
             { parse_mode: "HTML" },
           );
           return;

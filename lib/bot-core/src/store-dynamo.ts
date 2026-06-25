@@ -108,7 +108,7 @@ export class DynamoStore implements SessionStore, JobStore {
     );
   }
 
-  // ── Per-user rate limit (atomic fixed-window counter: max 10 jobs / 3 min) ──
+  // ── Per-user rate limit (atomic fixed-window counter: max 15 jobs / 3 min) ──
   // Uses a per-window row keyed by RATELIMIT#<userId>#<windowStart> and an
   // atomic ADD so concurrent requests can't race past the limit (the previous
   // read-modify-write on a shared row could be bypassed under burst). A fixed
@@ -116,7 +116,7 @@ export class DynamoStore implements SessionStore, JobStore {
   // tradeoff for correctness and simplicity over a racy sliding window.
   async tryLock(userId: number): Promise<boolean> {
     const windowMs = 3 * 60 * 1000;
-    const max = 10;
+    const max = 15;
     const now = Date.now();
     const windowStart = Math.floor(now / windowMs) * windowMs;
     const pk = `RATELIMIT#${userId}#${windowStart}`;

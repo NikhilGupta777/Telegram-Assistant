@@ -90,12 +90,12 @@ export interface JobStore {
 
 /**
  * In-memory job store for the local dev runner. Mirrors DynamoStore semantics:
- * a fixed-window rate limit (max 10 / 3 min) plus a separate set of active
+ * a fixed-window rate limit (max 15 / 3 min) plus a separate set of active
  * jobIds per user for /cancel.
  */
 export class MemoryJobStore implements JobStore {
   private static readonly RATE_WINDOW_MS = 3 * 60 * 1000;
-  private static readonly RATE_MAX = 10;
+  private static readonly RATE_MAX = 15;
 
   private readonly jobs = new Map<string, JobMapping>();
   // userId → set of in-flight jobIds (for /cancel + getActiveJobId).
