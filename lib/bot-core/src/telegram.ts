@@ -292,16 +292,24 @@ export function createBot(token: string, deps: BotDeps): Telegraf {
   });
 
   // ── Feature buttons & commands ──
+  // IMPORTANT: opening a wizard must NOT cancel the user's in-flight VMS jobs.
+  // Re-issuing /download (or tapping a feature button) used to call
+  // cancelUserJob() — which invoked VMS /jobs/:id/cancel on every active job
+  // for that user and killed legitimate in-flight work, surfacing as
+  // "❌ Cancelled by user" messages the user never asked for. Now we only
+  // clear the session (wizard state); the user's running jobs continue,
+  // and /cancel + ❌ Cancel + /start + 🏠 Main Menu remain the explicit
+  // "kill everything" entry points.
   for (const feature of ["clips", "cut", "subtitles", "timestamps", "download"] as const) {
     bot.action(`feat:${feature}`, async (ctx) => {
       await ctx.answerCbQuery();
-      await cancelUserJob(ctx.from!.id);
+      await sessions.clear(ctx.from!.id);
       await runAction(ctx, ctx.from!.id, startFeature(feature));
     });
 
     if (feature !== "clips") {
       bot.command(feature, async (ctx) => {
-        await cancelUserJob(ctx.from.id);
+        await sessions.clear(ctx.from.id);
         await runAction(ctx, ctx.from.id, startFeature(feature));
       });
     }
