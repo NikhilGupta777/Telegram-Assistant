@@ -119,6 +119,14 @@ export async function deliverResult(
   }
 
   // ── Inline media (cut / download) ──
+  // Telegram's sendVideo/sendAudio with a URL has a 50 MB cap (Telegram fetches
+  // the file itself). Full-quality YouTube downloads routinely exceed that and
+  // the call throws. The cascade is:
+  //   1. Try inline video/audio (works for small clips, ~80% of cuts)
+  //   2. If that fails, try a YouTube thumbnail + caption with the download
+  //      link — richer than a bare URL, and the user sees what they got
+  //   3. If THAT fails too (no source URL or network), fall through to plain
+  //      text link
   if (formatted.media && formatted.messages[0]) {
     const caption = formatted.messages[0];
     try {
@@ -137,7 +145,25 @@ export async function deliverResult(
       }
       return;
     } catch {
-      /* fall through to plain link delivery */
+      /* try the thumbnail fallback below */
+    }
+
+    // sendVideo/sendAudio failed (typically the 50 MB URL-fetch cap). Show
+    // the YouTube thumbnail with the download link as the caption so the
+    // user gets something visually meaningful, not a bare URL.
+    const sourceUrl = opts.payload?.["url"] as string | undefined;
+    const thumbUrl = sourceUrl ? youtubeThumbnailUrl(sourceUrl) : null;
+    if (thumbUrl) {
+      try {
+        await telegram.sendPhoto(chatId, thumbUrl, {
+          caption,
+          parse_mode: "HTML",
+          ...trailingKb,
+        });
+        return;
+      } catch {
+        /* fall through to plain link */
+      }
     }
   }
 
@@ -149,5 +175,34 @@ export async function deliverResult(
       link_preview_options: { is_disabled: true },
       ...(isLast ? trailingKb : {}),
     });
+  }
+}
+
+/**
+ * Build the canonical YouTube thumbnail URL for a watch / short / live / youtu.be
+ * link. Returns null if the URL isn't a YouTube one we recognise.
+ *   https://i.ytimg.com/vi/<id>/hqdefault.jpg  ← exists for every public video
+ */
+function youtubeThumbnailUrl(rawUrl: string): string | null {
+  try {
+    const u = new URL(rawUrl.trim());
+    const host = u.hostname.replace(/^(www\.|m\.)/, "");
+    let id: string | null = null;
+    if (host === "youtu.be") {
+      id = u.pathname.replace(/^\/+/, "").split("/")[0] ?? null;
+    } else if (host === "youtube.com") {
+      if (u.pathname === "/watch") id = u.searchParams.get("v");
+      else {
+        // /live/<id>, /shorts/<id>, /embed/<id>
+        const parts = u.pathname.split("/").filter(Boolean);
+        if (parts.length >= 2 && ["live", "shorts", "embed"].includes(parts[0]!)) {
+          id = parts[1] ?? null;
+        }
+      }
+    }
+    if (!id || !/^[A-Za-z0-9_-]{6,20}$/.test(id)) return null;
+    return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  } catch {
+    return null;
   }
 }

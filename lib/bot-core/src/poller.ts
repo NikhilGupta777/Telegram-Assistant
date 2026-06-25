@@ -43,7 +43,11 @@ export async function runJobPoller(
   opts: { intervalMs?: number; stopAfterMs?: number } = {},
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 10000;
-  const stopAfterMs = opts.stopAfterMs ?? 5 * 60 * 1000;
+  // 15 min — long enough for full-quality YouTube downloads that hit yt-dlp's
+  // "retrying with alternate client" anti-bot backoff loop. Below this the
+  // poller orphans long downloads and they're at the mercy of VMS's
+  // variable-latency webhook.
+  const stopAfterMs = opts.stopAfterMs ?? 15 * 60 * 1000;
   const t0 = Date.now();
   const deadline = t0 + stopAfterMs;
   let currentInterval = intervalMs;

@@ -86,15 +86,17 @@ Resources:
         AuthType: NONE
 
   # ── Lambda A: Telegram webhook → starts VMS jobs + self-invokes as poller ────
-  # Timeout is bumped to 360s so the self-invoked poller branch (event.source
-  # === "bot.poll") has headroom to poll VMS for up to ~5 min before giving up.
-  # The standard HTTP branch (Telegram webhook) returns in well under a second.
+  # Timeout is set to Lambda's 900s max so the self-invoked poller branch
+  # (event.source === "bot.poll") has headroom to poll VMS for up to ~15 min
+  # — enough for full-quality YouTube downloads that hit yt-dlp's anti-bot
+  # backoff loop. The standard HTTP branch (Telegram webhook) returns in
+  # well under a second regardless.
   TelegramFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: artifacts/telegram-lambda/dist/
       Handler: index.handler
-      Timeout: 360
+      Timeout: 900
       Environment:
         Variables:
           # VMS calls this URL when a job finishes (Lambda B's Function URL).
