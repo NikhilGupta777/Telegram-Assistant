@@ -239,6 +239,28 @@ describe("formatResult", () => {
     expect(r.messages[0]).toContain("1:05");
   });
 
+  it("formats timestamps from VMS Gemini shape (startSec + chapters key)", () => {
+    const r = formatResult(
+      {
+        ...base,
+        result: {
+          type: "chapters",
+          chapters: [
+            { startSec: 0, endSec: 33, label: "Intro" },
+            { startSec: 33, endSec: 88, label: "Part 2" },
+            { startSec: 153, endSec: 178, label: "Part 3" },
+          ],
+        },
+      },
+      "timestamps",
+    );
+    expect(r.messages[0]).toContain("Intro");
+    expect(r.messages[0]).toContain("0:33");
+    expect(r.messages[0]).toContain("2:33");
+    // The bug we are guarding against: every chapter rendering as 0:00.
+    expect(r.messages[0]).not.toMatch(/0:00.*0:00.*0:00/);
+  });
+
   it("rawFallback uses a friendly wrapper instead of bare JSON", () => {
     const r = formatResult({ ...base, result: { weird: "shape" } }, "clips");
     expect(r.messages[0]).toContain("Done!");

@@ -322,14 +322,25 @@ export function formatResult(
     }
 
     case "timestamps": {
-      type Chapter = { time?: number; start?: number; startTime?: number; label?: string; title?: string };
+      // VMS Gemini chapter responses use `startSec`; older shapes also include
+      // `time`, `start`, or `startTime`. Accept all so the first field present
+      // wins — otherwise every row falls back to 0 and the output reads as a
+      // wall of "0:00 — …" (the symptom reported in prod).
+      type Chapter = {
+        time?: number;
+        start?: number;
+        startTime?: number;
+        startSec?: number;
+        label?: string;
+        title?: string;
+      };
       const ts = (result["timestamps"] ?? result["chapters"]) as
         | Chapter[]
         | undefined;
       if (Array.isArray(ts) && ts.length > 0) {
         const lines = ts.map(
           (t) =>
-            `<code>${fmtTime(t.time ?? t.start ?? t.startTime ?? 0)}</code> — ${esc(t.label ?? t.title ?? "Chapter")}`,
+            `<code>${fmtTime(t.time ?? t.start ?? t.startTime ?? t.startSec ?? 0)}</code> — ${esc(t.label ?? t.title ?? "Chapter")}`,
         );
         const header = `⏱ <b>AI Timestamps</b> (${ts.length} chapters)\n\n`;
         const footer = `\n\n<i>📋 Copy &amp; paste into your YouTube description</i>`;
